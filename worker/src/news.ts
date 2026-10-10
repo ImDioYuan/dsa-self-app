@@ -6,12 +6,27 @@ import { addBilled, emptyUsage } from "./ai/types";
 import { displayName, loadConfig, type ConfigEnv, type Place, type UserConfig } from "./config";
 import { aiErrorResponse, json } from "./http";
 import { decodeEntities, readPrefix } from "./text";
-import { BOM_WARNINGS, feedsFor, TOPICS, type Feed } from "./topics";
+import {
+  allocate,
+  ensureScored,
+  EXPLORE_SLOTS,
+  exploreCandidates,
+  describePrefs,
+  FeedbackEvent,
+  levelOf,
+  PrefsUpdate,
+  recordFeedback,
+  savePrefs,
+  topRegions,
+  type Prefs,
+} from "./prefs";
+import { BOM_WARNINGS, feedsFor, GLOBAL, nameOf, REGIONS, TOPICS, type TaggedFeed } from "./topics";
 
 /**
- * 每日新闻：每天早上抓取用户选的话题的 RSS、天气和汇率，让 AI 选出若干条写成中英双语简报；
+ * 每日新闻：每天早上按用户的兴趣抓取 RSS、天气和汇率，让 AI 选出若干条写成中英双语简报；
  * 点开某条新闻、按下按钮时才生成深度报道（读原文 + 少量搜索），结果存进 KV，再打开不重复花钱。
- * 话题、条数、城市、汇率、时区和「关于我」都来自用户配置（config.ts）
+ * 兴趣、条数、城市、汇率、时区和「关于我」都来自用户配置（config.ts）；每个兴趣几条、常看的地区、
+ * 猜你喜欢的候选来自每天根据阅读情况打的分（prefs.ts）
  */
 
 export type NewsEnv = ConfigEnv;
@@ -41,34 +56,83 @@ function interestList(config: UserConfig): string {
   return config.news.interests.map((i) => `${i.id}（${i.nameZh}${i.hint ? `：${i.hint}` : ""}）`).join("；");
 }
 
-function briefPrompt(config: UserConfig, categories: string[], warnings: boolean): string {
+/** 这份简报的安排：每个兴趣几条、常看的地区、猜你喜欢的候选。批处理排队时存下来，取回时用同一份 */
+export interface BriefPlan {
+  allocation: Record<string, number>;
+  regions: string[];
+  candidates: string[];
+}
+
+export function planBrief(config: UserConfig, prefs: Prefs, date: string): BriefPlan {
+  const topics = config.news.topics;
+  const candidates = exploreCandidates(prefs, topics, date);
+  const levels = topics.map((id) => ({ id, level: levelOf(prefs, id) }));
+  return {
+    allocation: allocate(levels, config.news.count, candidates.length ? EXPLORE_SLOTS : 0),
+    regions: topRegions(prefs),
+    candidates,
+  };
+}
+
+/** 旧版排队的批处理没有存安排：每个兴趣一条 */
+function fallbackPlan(config: UserConfig): BriefPlan {
+  return { allocation: Object.fromEntries(config.news.topics.map((id) => [id, 1])), regions: [], candidates: [] };
+}
+
+export function totalOf(plan: BriefPlan): number {
+  return Object.values(plan.allocation).reduce((a, b) => a + b, 0) + (plan.candidates.length ? EXPLORE_SLOTS : 0);
+}
+
+const topicLabel = (id: string) => {
+  const topic = TOPICS.find((t) => t.id === id);
+  return topic ? `${id}（${topic.nameZh}：${topic.hint}）` : id;
+};
+
+function briefPrompt(config: UserConfig, plan: BriefPlan, categories: string[], warnings: boolean): string {
   const name = displayName(config);
-  const { count, places, interests, fxPairs } = config.news;
-  const topics = config.news.topics
-    .map((id) => TOPICS.find((t) => t.id === id)?.hint)
-    .filter(Boolean)
-    .concat(config.news.customFeeds.length ? ["用户自己添加的新闻源（标签 custom）"] : []);
+  const { places, interests, fxPairs, customFeeds } = config.news;
+  const total = totalOf(plan);
   const cities = places.map((p) => p.nameZh || p.nameEn).join("、");
   const interestNames = interests.map((i) => i.nameZh).join("、");
+  const quotas = Object.entries(plan.allocation)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([id, n]) => `  - ${topicLabel(id)}：${n} 条`)
+    .join("\n");
+  const countries = REGIONS.filter((r) => r.continent).map((r) => `${r.id}（${r.nameZh}）`).join("、");
+  const continents = REGIONS.filter((r) => !r.continent).map((r) => `${r.id}（${r.nameZh}）`).join("、");
+  const liked = plan.regions.map((id) => nameOf(id)?.nameZh ?? id).join("、");
+
+  const explore = plan.candidates.length
+    ? `- 另外从标签为 explore/… 的标题里挑 ${EXPLORE_SLOTS} 条：这些领域${name}还没选，你根据他的兴趣和介绍判断他最可能感兴趣的。explore 为 true，category 填对应的兴趣 id（${plan.candidates.map(topicLabel).join("；")}），reasonZh / reasonEn 用一句话说明为什么推荐给他（例如「你常看 AI 新闻，这条讲 AI 芯片的出口限制」）。
+- 其他新闻 explore 为 false，reasonZh / reasonEn 为空字符串。`
+    : `- 所有新闻 explore 都为 false，reasonZh / reasonEn 为空字符串。`;
 
   const weather = places.length
     ? `## 天气（weather）
 - 根据给定的天气预报${warnings ? "和澳洲气象局警告" : ""}，${cities}各写一句今明两天的天气（noteZh / noteEn），city 填城市 id（${places.map((p) => p.id).join("、")}）。
 - 出现极端天气时 extreme 为 true：最高温 ≥ 35°C 或最低温 ≤ -10°C、日降水 ≥ 30 mm、阵风 ≥ 70 km/h、雷暴（天气代码 95–99）、大雪${warnings ? "，或者有影响这些城市的气象局警告" : ""}。
-- extreme 为 true 时，在新闻里也放一条 weather 类新闻，headlineIds 可以为空。`
+- extreme 为 true 时，在新闻里也放一条 weather 类新闻，region 填城市所在的国家，headlineIds 可以为空。`
     : `## 天气（weather）\n- 没有关注的城市，weather 输出空数组。`;
 
-  return `你是${name}的私人新闻编辑。每天早上，你从给定的新闻标题里挑出最重要的 ${count} 条，写成中英双语简报，再总结这些新闻对${name}有什么直接影响。
+  return `你是${name}的私人新闻编辑。每天早上，你按${name}的兴趣从给定的新闻标题里挑出大约 ${total} 条，写成中英双语简报，再总结这些新闻对${name}有什么直接影响。
 
 ${aboutUser(config)}
 
 ## 选新闻
-- 话题：${topics.join("、")}。
+- ${name}的兴趣和每个兴趣大约几条（根据他平时爱看什么算出来的）：
+${quotas}
+- 某个兴趣当天的大新闻多可以多一条，没有重要的就少一条，不要为了凑数放进不重要的新闻。上面没有列出的领域不要，除非是影响很大的事。${customFeeds.length ? "\n- 标签为 custom 的是用户自己添加的新闻源，按内容归到上面的兴趣，都不合适就用 other。" : ""}
 - 重要性 = 对世界的影响 + 和${name}的关系。同一件事被几家媒体报道时合并成一条，把这些标题的 id 都写进 headlineIds（最多 4 个）。
-- 尽量覆盖各个话题，但不要为了凑数放进不重要的新闻；上面没有列出的话题（例如娱乐八卦、体育比赛、社会花边）不要。
-- 按重要性从高到低排列，正好 ${count} 条（标题实在不够时可以少于 ${count} 条）。
+- 按重要性从高到低排列，一共大约 ${total} 条（标题实在不够时可以少一些）。
 - importance：5 = 影响全球或直接影响${name}的大事，4 = 很重要，3 = 值得知道，2 或 1 = 一般。
-- category 只能用这 ${categories.length} 个值之一：${categories.join("、")}。标题前面的话题标签只是提示，不是分类。
+- category 只能用这 ${categories.length} 个值之一：${categories.join("、")}。标题前面的标签只表示新闻来自哪个源，按新闻内容归类。
+
+## 地区（region）
+- region 填新闻主要涉及的国家：${countries}；涉及别的国家或者说不清是哪国时填所在的洲：${continents}；跨地区的大事填 global。${liked ? `\n- ${name}常看这些地区的新闻：${liked}。同样重要时优先选这些地区的，但其他地区的大事照样要选。` : ""}
+
+## 猜你喜欢（explore）
+${explore}
 
 ## 写法
 - 只依据给定的标题和摘要，不要补充摘要里没有的数字、人名和细节；信息少就写得概括一点。
@@ -107,21 +171,26 @@ ${aboutUser(config)}
 
 // MARK: - 模型的输出格式
 
-/** 分类：用户选的话题 + 天气（有城市时）+ 其他（有自定义源时） */
-function categoriesFor(config: UserConfig): string[] {
+/** 分类：明天有条数的兴趣 + 猜你喜欢的候选 + 天气（有城市时）+ 其他（有自定义源时） */
+function categoriesFor(config: UserConfig, plan: BriefPlan): string[] {
   return [
-    ...config.news.topics,
+    ...Object.keys(plan.allocation).filter((id) => plan.allocation[id] > 0),
+    ...plan.candidates,
     ...(config.news.places.length ? ["weather"] : []),
     ...(config.news.customFeeds.length ? ["other"] : []),
   ];
 }
 
-function briefSchema(categories: string[], config: UserConfig) {
+function briefSchema(categories: string[], config: UserConfig, plan: BriefPlan) {
   return z.object({
     items: z
       .array(
         z.object({
           category: z.string().describe(`只能是其中之一：${categories.join("、")}`),
+          region: z.string().describe("国家或洲的 id，跨地区填 global"),
+          explore: z.boolean().describe("是不是猜你喜欢"),
+          reasonZh: z.string().describe("猜你喜欢的推荐理由，其他新闻为空"),
+          reasonEn: z.string(),
           importance: z.number().int().describe("1–5，5 最重要"),
           titleZh: z.string(),
           titleEn: z.string(),
@@ -131,7 +200,7 @@ function briefSchema(categories: string[], config: UserConfig) {
           affectsMe: z.boolean(),
         }),
       )
-      .describe(`按重要性从高到低，${config.news.count} 条`),
+      .describe(`按重要性从高到低，大约 ${totalOf(plan)} 条`),
     impact: z.object({
       overviewZh: z.string(),
       overviewEn: z.string(),
@@ -186,7 +255,8 @@ const SUBMIT_REPORT_TOOL: Anthropic.Tool = {
 interface Headline {
   id: string;
   source: string;
-  topic: string;
+  /** 来源标签，例如 topic/ai、region/china、explore/music */
+  tag: string;
   title: string;
   summary: string;
   link: string;
@@ -217,6 +287,12 @@ interface Brief {
     id: string;
     rank: number;
     category: string;
+    /** 国家或洲，跨地区为 global */
+    region: string;
+    /** 猜你喜欢 */
+    explore?: boolean;
+    reasonZh?: string;
+    reasonEn?: string;
     importance: number;
     titleZh: string;
     titleEn: string;
@@ -238,6 +314,7 @@ interface Brief {
   fx: FxRate[];
   /** 分类和「影响」各方面的显示名字（App 按这个显示，认识的 id 用专门的图标） */
   categories: Names;
+  regions: Names;
   interests: Names;
   /** batch：用 Batch API 半价生成的；priced：false 时模型不在价格表里，花费不准 */
   stats: {
@@ -253,6 +330,8 @@ interface Brief {
 
 /** 组装简报需要的输入（排队等批处理时只存这些，标题只留组装要用的字段） */
 interface BriefInputs {
+  /** 旧版排队的批处理没有 */
+  plan?: BriefPlan;
   headlines: Pick<Headline, "id" | "source" | "link" | "title">[];
   feeds: number;
   failedFeeds: string[];
@@ -356,11 +435,42 @@ export async function handleNews(request: Request, url: URL, env: NewsEnv): Prom
     if (url.pathname === "/news/report" && request.method === "POST") {
       return await report(request, env, config);
     }
+    if (url.pathname === "/news/feedback" && request.method === "POST") {
+      const parsed = FeedbackEvent.safeParse(await request.json().catch(() => null));
+      if (!parsed.success) return json({ error: "bad request", issues: parsed.error.issues }, 400);
+      const { date, id, ...event } = parsed.data;
+      await recordFeedback(env, date, id, event);
+      return json({ ok: true });
+    }
+    if (url.pathname === "/news/prefs") {
+      return await prefsRoute(request, env, config);
+    }
     return json({ error: "not found" }, 404);
   } catch (err) {
     if (err instanceof NewsError) return json({ error: err.message }, err.status);
     return aiErrorResponse(err);
   }
+}
+
+/** GET：兴趣分数、明天几条、常看地区、建议加入的兴趣。PUT：拖长条、不想再被推荐某个兴趣 */
+async function prefsRoute(request: Request, env: NewsEnv, config: UserConfig): Promise<Response> {
+  const today = localNow(config.timezone).date;
+  const prefs = await ensureScored(env, config, today);
+  if (request.method === "PUT") {
+    const parsed = PrefsUpdate.safeParse(await request.json().catch(() => null));
+    if (!parsed.success) return json({ error: "bad request", issues: parsed.error.issues }, 400);
+    for (const [id, level] of Object.entries(parsed.data.levels ?? {})) {
+      if (config.news.topics.includes(id)) prefs.levels[id] = Math.round(level);
+    }
+    if (parsed.data.dismiss) {
+      prefs.dismissed[parsed.data.dismiss] = today;
+      delete prefs.discover[parsed.data.dismiss];
+    }
+    await savePrefs(env, prefs);
+  } else if (request.method !== "GET") {
+    return json({ error: "method not allowed" }, 405);
+  }
+  return json(describePrefs(prefs, config, today));
 }
 
 /** Batch API 所有 token 五折 */
@@ -427,8 +537,8 @@ function anthropicClient(env: NewsEnv): Anthropic {
 }
 
 async function submitBatch(env: NewsEnv, config: UserConfig, choice: ModelChoice, date: string, weekday: string): Promise<void> {
-  const inputs = await gatherInputs(config, date);
-  requireEnoughHeadlines(inputs, config);
+  const inputs = await gatherInputs(env, config, date);
+  requireEnoughHeadlines(inputs);
   const batch = await anthropicClient(env).messages.batches.create({
     requests: [{ custom_id: `brief-${date}`, params: structuredParams(choice.model, briefRequest(config, date, weekday, inputs)) }],
   });
@@ -460,7 +570,8 @@ async function collectBatch(
     }
     let result;
     try {
-      result = parseStructured(model, entry.result.message, briefSchema(categoriesFor(config), config), BATCH_DISCOUNT);
+      const plan = pending.inputs.plan ?? fallbackPlan(config);
+      result = parseStructured(model, entry.result.message, briefSchema(categoriesFor(config, plan), config, plan), BATCH_DISCOUNT);
     } catch (err) {
       console.error("brief batch output unusable", err);
       if (err instanceof AIError && err.billed) await addUsage(env, date, err.billed.costUSD, "failure");
@@ -507,13 +618,14 @@ async function generate(request: Request, env: NewsEnv, config: UserConfig): Pro
   const now = localNow(config.timezone);
 
   if (dryRun) {
-    const inputs = await gatherInputs(config, now.date);
+    const inputs = await gatherInputs(env, config, now.date);
     const req = briefRequest(config, now.date, now.weekday, inputs);
     return json({
+      plan: inputs.plan,
       feeds: inputs.feeds - inputs.failedFeeds.length,
       failedFeeds: inputs.failedFeeds,
       headlines: inputs.headlines.length,
-      byTopic: countBy(inputs.headlines, (h) => h.topic),
+      byTag: countBy(inputs.headlines, (h) => h.tag),
       promptChars: req.system.length + String(req.content).length,
       system: req.system,
       prompt: String(req.content).slice(0, 4000),
@@ -551,8 +663,8 @@ async function generateWithLock(env: NewsEnv, config: UserConfig, date: string, 
 /** 同步生成（「立即生成」、批处理失败或太慢时、不支持批处理的服务商） */
 async function generateBrief(env: NewsEnv, config: UserConfig, date: string, weekday: string): Promise<Brief> {
   const choice = resolveChoice(env, config.ai.brief, "brief");
-  const inputs = await gatherInputs(config, date);
-  requireEnoughHeadlines(inputs, config);
+  const inputs = await gatherInputs(env, config, date);
+  requireEnoughHeadlines(inputs);
 
   const ai = createClient(env, choice);
   try {
@@ -565,29 +677,31 @@ async function generateBrief(env: NewsEnv, config: UserConfig, date: string, wee
   }
 }
 
-function requireEnoughHeadlines(inputs: Inputs, config: UserConfig): void {
-  const needed = Math.min(30, config.news.count + 5);
+function requireEnoughHeadlines(inputs: Inputs): void {
+  const needed = Math.min(30, totalOf(inputs.plan) + 5);
   if (inputs.headlines.length < needed) {
-    throw new NewsError(`只抓到 ${inputs.headlines.length} 条新闻，新闻源可能出了问题，或者选的话题太少`);
+    throw new NewsError(`只抓到 ${inputs.headlines.length} 条新闻，新闻源可能出了问题，或者选的兴趣太少`);
   }
 }
 
 /** 同步和批处理用同一份请求 */
 function briefRequest(config: UserConfig, date: string, weekday: string, inputs: Inputs) {
-  const categories = categoriesFor(config);
+  const { plan } = inputs;
+  const categories = categoriesFor(config, plan);
   return {
-    system: briefPrompt(config, categories, inputs.warnings.length > 0 || hasBomPlace(config.news.places)),
+    system: briefPrompt(config, plan, categories, inputs.warnings.length > 0 || hasBomPlace(config.news.places)),
     content: buildPrompt(config, date, weekday, inputs),
-    schema: briefSchema(categories, config),
+    schema: briefSchema(categories, config, plan),
     name: "news_brief",
     // 非流式请求超过约 21000 token 时 SDK 会要求改用流式
-    maxTokens: Math.min(21_000, 8_000 + config.news.count * 600),
+    maxTokens: Math.min(21_000, 8_000 + totalOf(plan) * 600),
     effort: "medium" as const,
   };
 }
 
 function storedInputs(inputs: Inputs): BriefInputs {
   return {
+    plan: inputs.plan,
     headlines: inputs.headlines.map(({ id, source, link, title }) => ({ id, source, link, title })),
     feeds: inputs.feeds,
     failedFeeds: inputs.failedFeeds,
@@ -599,11 +713,9 @@ function storedInputs(inputs: Inputs): BriefInputs {
 
 function namesOf(ids: string[]): Names {
   const names: Names = {};
-  for (const id of ids) {
-    const topic = TOPICS.find((t) => t.id === id);
-    if (topic) names[id] = { nameZh: topic.nameZh, nameEn: topic.nameEn };
-    else if (id === "weather") names[id] = { nameZh: "天气", nameEn: "Weather" };
-    else if (id === "other") names[id] = { nameZh: "其他", nameEn: "Other" };
+  for (const id of new Set(ids)) {
+    const name = nameOf(id);
+    if (name) names[id] = name;
   }
   return names;
 }
@@ -621,10 +733,16 @@ async function assembleBrief(
   ai?: AIClient,
 ): Promise<Brief> {
   const byID = new Map(inputs.headlines.map((h) => [h.id, h]));
-  const categories = categoriesFor(config);
+  const plan = inputs.plan ?? fallbackPlan(config);
+  const categories = categoriesFor(config, plan);
   const interests = config.news.interests;
   const places = inputs.places ?? config.news.places;
-  const items = out.items.slice(0, config.news.count);
+  // 每个兴趣可以多一条
+  const items = out.items.slice(0, totalOf(plan) + 2).map((item) => {
+    const category = toCategory(item.category, categories);
+    const explore = item.explore && plan.candidates.includes(category);
+    return { ...item, category, region: toRegion(item.region), explore };
+  });
 
   const brief: Brief = {
     date,
@@ -638,7 +756,9 @@ async function assembleBrief(
       return {
         id: String(i + 1),
         rank: i + 1,
-        category: toCategory(item.category, categories),
+        category: item.category,
+        region: item.region,
+        ...(item.explore ? { explore: true, reasonZh: item.reasonZh, reasonEn: item.reasonEn } : {}),
         importance: Math.min(5, Math.max(1, Math.round(item.importance))),
         titleZh: item.titleZh,
         titleEn: item.titleEn,
@@ -669,7 +789,8 @@ async function assembleBrief(
       };
     }),
     fx: inputs.fx,
-    categories: namesOf(categories),
+    categories: namesOf(items.map((i) => i.category)),
+    regions: namesOf(items.map((i) => i.region)),
     interests: Object.fromEntries(interests.map((i) => [i.id, { nameZh: i.nameZh, nameEn: i.nameEn }])),
     stats: {
       // 部署前排队的批处理没有 feeds 字段
@@ -798,6 +919,8 @@ async function report(request: Request, env: NewsEnv, config: UserConfig): Promi
     const report = { ...content, stats: meter.stats(choice.model) };
     await env.NEWS.put(key, JSON.stringify(report), { expirationTtl: KEEP_SECONDS });
     await addUsage(env, date, meter.cost, "report");
+    // 生成深度报道说明很感兴趣，记进阅读情况
+    await recordFeedback(env, date, id, { event: "report" }).catch(() => {});
     return json({ report });
   } catch (err) {
     // 没生成出来也已经花了钱，记上
@@ -926,6 +1049,7 @@ export function repairReport(r: z.infer<typeof ReportOut>): z.infer<typeof Repor
 // MARK: - 抓取输入
 
 interface Inputs {
+  plan: BriefPlan;
   headlines: Headline[];
   feeds: number;
   failedFeeds: string[];
@@ -935,9 +1059,12 @@ interface Inputs {
   fx: FxRate[];
 }
 
-async function gatherInputs(config: UserConfig, date: string): Promise<Inputs> {
+/** 先用昨天的阅读情况打分，算出今天的安排，再按安排抓源 */
+async function gatherInputs(env: NewsEnv, config: UserConfig, date: string): Promise<Inputs> {
   const now = new Date();
-  const feeds = feedsFor(config.news.topics, config.news.customFeeds);
+  const prefs = await ensureScored(env, config, date);
+  const plan = planBrief(config, prefs, date);
+  const feeds = feedsFor({ ...plan, custom: config.news.customFeeds });
   const places = config.news.places;
   const [collected, weather, warnings, fx] = await Promise.all([
     collectHeadlines(feeds, now),
@@ -945,11 +1072,11 @@ async function gatherInputs(config: UserConfig, date: string): Promise<Inputs> {
     fetchWarnings(places).catch(() => []),
     fetchFx(date, config.news.fxPairs).catch(() => []),
   ]);
-  return { ...collected, feeds: feeds.length, places, weather, warnings, fx };
+  return { ...collected, plan, feeds: feeds.length, places, weather, warnings, fx };
 }
 
 async function collectHeadlines(
-  feeds: (Feed & { topic: string })[],
+  feeds: TaggedFeed[],
   now: Date,
 ): Promise<{ headlines: Headline[]; failedFeeds: string[] }> {
   const results = await Promise.allSettled(feeds.map((feed) => fetchFeed(feed.url)));
@@ -957,6 +1084,8 @@ async function collectHeadlines(
   const headlines: Headline[] = [];
   const failedFeeds: string[] = [];
   const seenTitles = new Set<string>();
+  // 源多的时候每个源少取几条，标题总数控制在 320 条左右（提示词长度和花费）
+  const perFeed = Math.min(PER_FEED, Math.max(5, Math.floor(320 / Math.max(1, feeds.length))));
 
   results.forEach((result, i) => {
     const feed = feeds[i];
@@ -968,12 +1097,12 @@ async function collectHeadlines(
       .filter((h) => h.title && h.link)
       .filter((h) => !h.published || (h.published.getTime() >= cutoff && h.published.getTime() <= now.getTime() + 3_600_000))
       .sort((a, b) => (b.published?.getTime() ?? 0) - (a.published?.getTime() ?? 0))
-      .slice(0, PER_FEED);
+      .slice(0, perFeed);
     for (const h of fresh) {
       const key = h.title.toLowerCase();
       if (seenTitles.has(key)) continue;
       seenTitles.add(key);
-      headlines.push({ ...h, id: `n${headlines.length + 1}`, source: feed.name, topic: feed.topic });
+      headlines.push({ ...h, id: `n${headlines.length + 1}`, source: feed.name, tag: feed.tag });
     }
   });
   return { headlines, failedFeeds };
@@ -1187,7 +1316,7 @@ function buildPrompt(config: UserConfig, date: string, weekday: string, inputs: 
   const headlines = inputs.headlines
     .map((h) => {
       const time = h.published ? shortTime.format(h.published) : "-";
-      return `${h.id} | ${h.topic} | ${h.source} | ${time} | ${h.title}${h.summary ? ` — ${h.summary}` : ""}`;
+      return `${h.id} | ${h.tag} | ${h.source} | ${time} | ${h.title}${h.summary ? ` — ${h.summary}` : ""}`;
     })
     .join("\n");
 
@@ -1196,7 +1325,7 @@ function buildPrompt(config: UserConfig, date: string, weekday: string, inputs: 
     ...(inputs.places.length ? [`<weather>\n${weather}\n</weather>`] : []),
     ...(hasBomPlace(inputs.places) ? [`<bom_warnings>\n${inputs.warnings.join("\n") || "（无）"}\n</bom_warnings>`] : []),
     ...(config.news.fxPairs.length ? [`<fx>\n${fx || "（没有数据）"}\n</fx>`] : []),
-    `<headlines count="${inputs.headlines.length}">\nid | 话题 | 来源 | 发布时间 | 标题 — 摘要\n${headlines}\n</headlines>`,
+    `<headlines count="${inputs.headlines.length}">\nid | 来源标签 | 来源 | 发布时间 | 标题 — 摘要\n${headlines}\n</headlines>`,
   ].join("\n\n");
 }
 
@@ -1224,28 +1353,72 @@ export function localNow(timezone: string, at = new Date()): { date: string; min
   };
 }
 
-/** 模型偶尔会用列表外的分类（比如照抄标题前的话题标签），归到最接近的那个，不让整份简报作废 */
+/** 模型偶尔会用列表外的分类（比如照抄标题前的来源标签），归到最接近的那个，不让整份简报作废 */
 const CATEGORY_ALIASES: Record<string, string> = {
-  tech: "tech_ai",
-  ai: "tech_ai",
-  world: "international",
+  tech: "ai",
+  tech_ai: "ai",
+  technology: "big_tech",
+  world: "diplomacy",
+  international: "diplomacy",
   war: "conflict",
-  sydney: "australia",
-  nsw: "australia",
-  shipping: "finance",
-  business: "finance",
-  markets: "finance",
-  economy: "finance",
-  finance_au: "finance",
+  business: "economy",
+  finance: "markets",
+  stocks: "markets",
+  games: "gaming",
+  game: "gaming",
+  cars: "auto",
+  ev: "auto",
+  defense: "military",
+  defence: "military",
+  health: "medicine",
+  movies: "film_tv",
+  film: "film_tv",
+  tv: "film_tv",
   custom: "other",
 };
 
+/** 去掉来源标签的前缀（topic/ai → ai），空格和连字符换成下划线 */
+function normalizeID(raw: string): string {
+  const key = raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return key.includes("/") ? key.slice(key.lastIndexOf("/") + 1) : key;
+}
+
 export function toCategory(raw: string, allowed: string[]): string {
-  const key = raw.trim().toLowerCase();
+  const key = normalizeID(raw);
   if (allowed.includes(key)) return key;
   const alias = CATEGORY_ALIASES[key];
   if (alias && allowed.includes(alias)) return alias;
-  return allowed.includes("international") ? "international" : allowed.includes("other") ? "other" : (allowed[0] ?? "other");
+  return allowed.includes("other") ? "other" : (allowed[0] ?? "other");
+}
+
+const REGION_ALIASES: Record<string, string> = {
+  cn: "china",
+  prc: "china",
+  hong_kong: "china",
+  hongkong: "china",
+  macau: "china",
+  taiwan: "asia",
+  usa: "us",
+  united_states: "us",
+  america: "us",
+  gb: "uk",
+  britain: "uk",
+  united_kingdom: "uk",
+  england: "uk",
+  korea: "south_korea",
+  au: "australia",
+  nz: "new_zealand",
+  eu: "europe",
+  mideast: "middle_east",
+  latam: "latin_america",
+  world: GLOBAL,
+  international: GLOBAL,
+};
+
+export function toRegion(raw: string): string {
+  const key = normalizeID(raw);
+  if (key === GLOBAL || REGIONS.some((r) => r.id === key)) return key;
+  return REGION_ALIASES[key] ?? GLOBAL;
 }
 
 export function toArea(raw: string, allowed: string[]): string {

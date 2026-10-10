@@ -254,6 +254,39 @@ struct DSAClient: Sendable {
         return response.report
     }
 
+    // MARK: - /news/feedback、/news/prefs：阅读情况和兴趣分数
+
+    struct FeedbackEvent: Encodable, Sendable {
+        var date: String
+        var id: String
+        /// open（点开）/ read（看了几秒）/ link（打开原文）/ vote（👍 1、👎 -1、取消 0）
+        var event: String
+        var seconds: Double?
+        var vote: Int?
+    }
+
+    private struct OKResponse: Decodable { var ok: Bool }
+
+    /// 记一次阅读情况，Worker 每天用它给兴趣打分
+    func newsFeedback(_ event: FeedbackEvent) async throws {
+        let _: OKResponse = try await post("news/feedback", body: event, timeout: 15)
+    }
+
+    func newsPrefs() async throws -> NewsPrefs {
+        try await get("news/prefs", timeout: 30)
+    }
+
+    struct PrefsUpdate: Encodable, Sendable {
+        /// 拖过的长条
+        var levels: [String: Int]?
+        /// 不想再被推荐的兴趣
+        var dismiss: String?
+    }
+
+    func updateNewsPrefs(_ update: PrefsUpdate) async throws -> NewsPrefs {
+        try await send("PUT", "news/prefs", body: update, timeout: 30)
+    }
+
     // MARK: - /config：个人资料、新闻设置、AI 服务（存在 Worker 的 KV 里）
 
     func config() async throws -> ConfigResponse {

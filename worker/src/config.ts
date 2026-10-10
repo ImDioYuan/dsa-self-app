@@ -2,7 +2,7 @@ import { z } from "zod";
 import { configuredProviders, PROVIDERS, type AIEnv } from "./ai";
 import { PROVIDER_IDS, type AITask } from "./ai/types";
 import { json } from "./http";
-import { DEFAULT_TOPICS, TOPICS } from "./topics";
+import { DEFAULT_TOPICS, GROUPS, LEGACY_TOPICS, TOPICS } from "./topics";
 
 /**
  * 用户配置：称呼、关于我、特别关注、新闻设置、AI 服务。存在这个 Worker 自己的 KV 里（key = config），
@@ -74,10 +74,14 @@ export const DEFAULT_INTERESTS: z.infer<typeof Interest>[] = [
 ];
 
 const NewsConfig = z.object({
+  /** 选的兴趣（topics.ts 的 TOPICS）。旧版的话题 id 换成对应的兴趣，旧的地区话题去掉（地区改成从阅读里推断） */
   topics: z
     .array(z.string())
-    .max(TOPICS.length)
-    .transform((ids) => ids.filter((id, i) => ids.indexOf(id) === i && TOPICS.some((t) => t.id === id)))
+    .transform((ids) => {
+      const mapped = ids.flatMap((id) => (TOPICS.some((t) => t.id === id) ? [id] : (LEGACY_TOPICS[id] ?? [])));
+      const unique = mapped.filter((id, i) => mapped.indexOf(id) === i);
+      return unique.length ? unique : DEFAULT_TOPICS;
+    })
     .catch(DEFAULT_TOPICS),
   customFeeds: lenientArray(z.object({ name: z.string().trim().min(1).max(40), url: z.url({ protocol: /^https?$/ }) }), 10),
   count: z.number().int().min(5).max(30).catch(20),
@@ -154,6 +158,7 @@ async function describe(env: ConfigEnv, config: UserConfig) {
         vision: m.vision ?? true,
       })),
     })),
-    topics: TOPICS.map(({ id, nameZh, nameEn, feeds }) => ({ id, nameZh, nameEn, feeds: feeds.length })),
+    topics: TOPICS.map(({ id, nameZh, nameEn, group, feeds }) => ({ id, nameZh, nameEn, group, feeds: feeds.length })),
+    groups: GROUPS,
   };
 }

@@ -120,6 +120,43 @@ final class NewsStore {
         }
     }
 
+    // MARK: - 阅读情况（Worker 用它学习你的兴趣）
+
+    /// 👍 1 / 👎 -1，key 和深度报道一样是 日期#id。存在本机，图标高亮用；Worker 也有一份用来打分
+    private(set) var votes: [String: Int] = UserDefaults.standard.dictionary(forKey: "news.votes") as? [String: Int] ?? [:]
+
+    /// 点同一个再点一次就取消
+    func vote(date: String, id: String, _ value: Int) {
+        let key = Self.reportKey(date: date, id: id)
+        let new = votes[key] == value ? 0 : value
+        votes[key] = new == 0 ? nil : new
+        // 只留最近的，免得越存越多
+        if votes.count > 300 {
+            for old in votes.keys.sorted().prefix(votes.count - 300) { votes[old] = nil }
+        }
+        UserDefaults.standard.set(votes, forKey: "news.votes")
+        sendFeedback(.init(date: date, id: id, event: "vote", vote: new))
+    }
+
+    func recordOpen(date: String, id: String) {
+        sendFeedback(.init(date: date, id: id, event: "open"))
+    }
+
+    func recordRead(date: String, id: String, seconds: TimeInterval) {
+        guard seconds >= 1 else { return }
+        sendFeedback(.init(date: date, id: id, event: "read", seconds: seconds.rounded()))
+    }
+
+    func recordLink(date: String, id: String) {
+        sendFeedback(.init(date: date, id: id, event: "link"))
+    }
+
+    /// 发不出去（没网、Worker 没配好）就算了，不重试
+    private func sendFeedback(_ event: DSAClient.FeedbackEvent) {
+        guard let client = try? DSAClient.fromSettings() else { return }
+        Task { try? await client.newsFeedback(event) }
+    }
+
     // MARK: - 深度报道
 
     static func reportKey(date: String, id: String) -> String { "\(date)#\(id)" }

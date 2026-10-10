@@ -4,6 +4,7 @@ import SwiftUI
 struct NewsView: View {
     @State private var store = NewsStore.shared
     @AppStorage(NewsLanguage.storageKey) private var languageRaw = NewsLanguage.zh.rawValue
+    @State private var showingInterests = false
 
     private var lang: NewsLanguage { NewsLanguage(rawValue: languageRaw) ?? .zh }
 
@@ -29,7 +30,7 @@ struct NewsView: View {
                             .padding(.top, 8)
                         ForEach(brief.items) { item in
                             NavigationLink(value: NewsRoute(date: brief.date, item: item)) {
-                                NewsRow(item: item, lang: lang)
+                                NewsRow(item: item, brief: brief, lang: lang)
                             }
                             .buttonStyle(.plain)
                         }
@@ -46,9 +47,21 @@ struct NewsView: View {
             .navigationDestination(for: NewsRoute.self) { route in
                 NewsDetailView(route: route)
             }
+            .sheet(isPresented: $showingInterests) {
+                NavigationStack {
+                    InterestsView(showsDoneButton: true)
+                }
+                .macSheetFrame(minWidth: 460, minHeight: 560)
+                .themedTint()
+            }
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
                     NewsLanguagePicker(selection: $languageRaw)
+                    Button {
+                        showingInterests = true
+                    } label: {
+                        Label(lang.pick("我的兴趣", "My interests"), systemImage: "slider.horizontal.3")
+                    }
                     if !store.dates.isEmpty {
                         Menu {
                             ForEach(store.dates, id: \.self) { date in
@@ -279,6 +292,7 @@ private struct FXCard: View {
 
 private struct NewsRow: View {
     let item: NewsItem
+    let brief: NewsBrief
     let lang: NewsLanguage
 
     var body: some View {
@@ -290,9 +304,15 @@ private struct NewsRow: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
-                    Label(item.category.name(lang), systemImage: item.category.systemImage)
+                    Label(item.category.name(lang, names: brief.categories), systemImage: item.category.systemImage)
                         .font(.caption.weight(.medium))
                         .foregroundStyle(item.category.tint)
+                    if let region = item.regionName(lang, names: brief.regions) {
+                        Text(region).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if item.isExplore {
+                        Pill(text: lang.pick("猜你喜欢", "You might like"), tint: .pink)
+                    }
                     if item.importance >= 5 {
                         Pill(text: lang.pick("重大", "Major"), tint: .red)
                     }
@@ -309,6 +329,12 @@ private struct NewsRow: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
+                if item.isExplore, !item.reason(lang).isEmpty {
+                    Label(item.reason(lang), systemImage: "sparkles")
+                        .font(.caption)
+                        .foregroundStyle(.pink)
+                        .lineLimit(2)
+                }
                 if !item.sources.isEmpty {
                     Text(item.sources.map(\.name).uniqued().joined(separator: " · "))
                         .font(.caption2)
@@ -388,7 +414,7 @@ private struct EmptyNewsCard: View {
             } else {
                 Text(lang.pick("还没有新闻简报", "No briefs yet")).font(.headline)
                 Text(lang.pick(
-                    "每天早上自动生成：要闻、对你的影响、关注城市的天气。话题、条数、城市和时间在 设置 → 新闻 里调整。也可以现在生成一份。",
+                    "每天早上自动生成：要闻、对你的影响、关注城市的天气。兴趣在右上角的「我的兴趣」里选，条数、城市和时间在 设置 → 新闻 里调整。也可以现在生成一份。",
                     "A brief arrives every morning: top stories, what they mean for you, and the weather where you care. Change topics, count, cities and time in Settings → News."
                 ))
                 .font(.footnote)

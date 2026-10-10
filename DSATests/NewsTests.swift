@@ -10,7 +10,7 @@ struct NewsTests {
     "items":[
       {"id":"1","rank":1,"category":"conflict","importance":5,"titleZh":"红海航运再受袭击","titleEn":"Red Sea shipping attacked again",
        "summaryZh":"摘要","summaryEn":"Summary","sources":[{"name":"BBC News","url":"https://www.bbc.com/news/1","title":"Ships attacked"}],"affectsMe":true},
-      {"id":"2","rank":2,"category":"space","importance":3,"titleZh":"新分类","titleEn":"","summaryZh":"中文摘要","summaryEn":"",
+      {"id":"2","rank":2,"category":"underwater_basket","importance":3,"titleZh":"新分类","titleEn":"","summaryZh":"中文摘要","summaryEn":"",
        "sources":[],"affectsMe":false}
     ],
     "impact":{"overviewZh":"运费可能上涨","overviewEn":"Freight may rise",
@@ -31,8 +31,8 @@ struct NewsTests {
         #expect(brief.items[0].category == NewsCategory("conflict"))
         #expect(brief.items[0].category.name(.zh) == "战争冲突")
         // 不认识的分类、影响领域不让整份简报解析失败，直接显示 id
-        #expect(brief.items[1].category.id == "space")
-        #expect(brief.items[1].category.name(.en) == "Space")
+        #expect(brief.items[1].category.id == "underwater_basket")
+        #expect(brief.items[1].category.name(.en) == "Underwater Basket")
         #expect(brief.items[1].category.systemImage == "newspaper")
         // 以前的简报没有 interests，用 id 显示
         #expect(brief.interests == nil)
@@ -81,6 +81,51 @@ struct NewsTests {
     struct ReportWrapper: Decodable { var report: NewsReport }
 
     /// 以前生成的报道没有 stats，新的带 stats（App 只用 costUSD，其他用量字段忽略）
+    /// 新版简报：每条带地区，猜你喜欢带理由；简报里附上兴趣和地区的名字
+    @Test func decodesRegionsAndExplore() throws {
+        var json = Self.briefJSON
+        json = json.replacingOccurrences(of: #""rank":1,"category":"conflict""#, with: #""rank":1,"category":"conflict","region":"middle_east""#)
+        json = json.replacingOccurrences(of: #""rank":2,"category":"underwater_basket""#, with: #""rank":2,"category":"esports","region":"global","explore":true,"reasonZh":"你常看游戏新闻","reasonEn":"You read gaming news""#)
+        json = json.replacingOccurrences(of: #""stats":{"feeds":26"#, with: #""categories":{"esports":{"nameZh":"电子竞技","nameEn":"Esports"}},"regions":{"middle_east":{"nameZh":"中东","nameEn":"Middle East"}},"stats":{"feeds":26"#)
+        let brief = try DSAClient.decoder.decode(Wrapper.self, from: Data(json.utf8)).brief
+        #expect(brief.items[0].regionName(.zh, names: brief.regions) == "中东")
+        #expect(brief.items[0].isExplore == false)
+        // 跨地区的不显示地区
+        #expect(brief.items[1].regionName(.zh, names: brief.regions) == nil)
+        #expect(brief.items[1].isExplore)
+        #expect(brief.items[1].reason(.zh) == "你常看游戏新闻")
+        #expect(brief.items[1].category.name(.zh) == "电竞")
+        let again = try DSAClient.decoder.decode(NewsBrief.self, from: DSAClient.encoder.encode(brief))
+        #expect(again.items == brief.items)
+        #expect(again.regions == brief.regions)
+    }
+
+    @Test func decodesPrefs() throws {
+        let json = """
+        {"interests":[{"id":"ai","level":70,"previous":60,"count":9},{"id":"sports","level":5,"previous":15,"count":0}],
+         "exploreCount":2,"regions":[{"id":"china","nameZh":"中国","nameEn":"China","share":0.62}],
+         "suggestions":[{"id":"gaming","nameZh":"电子游戏","nameEn":"Gaming"}]}
+        """
+        let prefs = try DSAClient.decoder.decode(NewsPrefs.self, from: Data(json.utf8))
+        #expect(prefs.interests.map(\.count) == [9, 0])
+        #expect(prefs.regions.first?.share == 0.62)
+        #expect(prefs.suggestions.map(\.id) == ["gaming"])
+    }
+
+    /// 和 worker/test/prefs.test.ts 里的分配结果一致
+    @Test func allocationMatchesWorker() {
+        let even = InterestAllocation.allocate(["ai", "sports", "music", "science"].map { ($0, 50.0) }, total: 20)
+        #expect(["ai", "sports", "music", "science"].map { even[$0] } == [5, 5, 4, 4])
+        #expect(InterestAllocation.allocate([("a", 90), ("b", 5)], total: 12) == ["a": 10, "b": 0])
+        #expect(InterestAllocation.allocate([("a", 0), ("b", 0)], total: 12) == ["a": 5, "b": 5])
+        #expect(InterestAllocation.allocate([("a", 100), ("b", 37), ("c", 12)], total: 20) == ["a": 12, "b": 5, "c": 1])
+        for total in [5, 12, 20, 30] {
+            let c = InterestAllocation.allocate([("a", 100), ("b", 37), ("c", 12)], total: total)
+            #expect(c.values.reduce(0, +) == total - 2)
+            #expect((c["c"] ?? 0) >= 1)
+        }
+    }
+
     @Test func decodesReportWithAndWithoutStats() throws {
         let base = """
         "titleZh":"标题","titleEn":"Title","sections":[{"headingZh":"发生了什么","headingEn":"What happened","bodyZh":"正文","bodyEn":"Body"}],

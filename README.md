@@ -12,7 +12,7 @@ A personal, Apple-style app for iPhone, iPad and Mac (one SwiftUI codebase, iOS 
 |---|---|
 | **Today** | Pulls to-dos from Apple Calendar, Reminders, subscribed iCal links (Moodle, Canvas, Google Calendar, Outlook…) and Gmail (an AI decides which emails need action). Eisenhower matrix, cross-source de-duplication. |
 | **Ledger** | Manual entries in multiple currencies, budgets and charts; receipt scanning; Apple Pay automation via Shortcuts; payment receipts from Gmail; CSV import (Australian banks, Alipay, WeChat Pay); widgets, Control Center buttons and a Camera Control capture extension. |
-| **News** | Every morning an AI picks the most important stories from RSS feeds of the topics you choose and writes a bilingual brief, plus "what it means for you", weather for your cities and FX rates. Deep reports are generated only when you tap the button. |
+| **News** | Every morning an AI picks stories for the interests you choose (about 50, from conflict and AI to music and pets) and writes a bilingual brief, plus "what it means for you", weather for your cities and FX rates. It learns from what you read: each interest has a slider that grows when you read it and shrinks when you don't, regions you read about are preferred, and two "you might like" stories a day suggest new interests. Deep reports are generated only when you tap the button. |
 
 ### Platforms
 
@@ -72,7 +72,7 @@ npx wrangler secret put ANTHROPIC_API_KEY      # and/or OPENAI_API_KEY, GEMINI_A
 npx wrangler deploy
 ```
 
-**3. In the app** (Settings): enter the Worker URL and `APP_TOKEN`, then fill in 个人资料 (profile), 新闻 (topics, number of stories, cities, FX pairs, time) and AI 服务 (provider and model per feature).
+**3. In the app** (Settings): enter the Worker URL and `APP_TOKEN`, then fill in 个人资料 (profile), 新闻 (number of stories, cities, FX pairs, time) and 我的兴趣 (interests, on the News tab) and AI 服务 (provider and model per feature).
 
 **4. Optional**: Gmail (create an iOS OAuth client in Google Cloud with your bundle ID, enable the Gmail API, paste the client ID in Settings), subscribed calendars, forwarding a school or work mailbox to a Gmail label.
 
@@ -93,7 +93,7 @@ xcodebuild test -scheme DSA -destination 'platform=iOS Simulator,name=iPhone 18 
 |---|---|
 | **今日** | 从苹果日历、提醒事项、订阅日历（Moodle、Canvas、Google 日历、Outlook 等的 iCal 链接）和 Gmail（AI 判断哪些邮件要处理）整理待办；四象限；不同来源的同一件事自动合并。 |
 | **记账** | 多币种手动记账、预算、图表；拍小票识别；快捷指令 + Apple Pay 自动记账；Gmail 付款收据自动记账；导入 CSV（澳洲银行、支付宝、微信）；小组件、控制中心按钮、相机控制键拍小票。 |
-| **新闻** | 每天早上从你选的话题的 RSS 里挑出最重要的新闻，写成中英双语简报，再写「对你的影响」、关注城市的天气和汇率。深度报道点按钮才生成。 |
+| **新闻** | 每天早上按你选的兴趣（约 50 个，从战争冲突、AI 到音乐、宠物）从 RSS 里挑新闻，写成中英双语简报，再写「对你的影响」、关注城市的天气和汇率。会学习你的喜好：每个兴趣一条长条，常看的变长、不看的慢慢变短；自动统计你常看的地区；每天 2 条「猜你喜欢」帮你发现新兴趣。深度报道点按钮才生成。 |
 
 ### 支持的系统
 
@@ -143,7 +143,8 @@ npx wrangler deploy                             # 部署后会显示 https://dsa
 
 1. AI 服务：填 Worker 地址和 `APP_TOKEN`，点「测试连接」；在「AI 服务商和模型」里选模型。
 2. 个人资料：称呼、关于我（身份、城市、关心的事）、特别关注的邮件规则。
-3. 新闻：话题、每天几条、关注的城市、汇率、「对你的影响」分哪几方面、自定义 RSS、生成时间。
+3. 新闻：每天几条、关注的城市、汇率、「对你的影响」分哪几方面、自定义 RSS、生成时间。
+4. 我的兴趣（新闻页右上角）：选兴趣。第一天每个兴趣平均分条数，之后 AI 每天根据你点开了哪些新闻、看了多久、有没有 👍👎 自动调整长条，你也可以自己拖。阅读记录只存在你自己的 Worker 里。
 
 ### Gmail（可选）
 
@@ -173,7 +174,7 @@ npx wrangler deploy                             # 部署后会显示 https://dsa
 
 ### 花费
 
-- 每日简报：20 条，Claude Sonnet 用批处理大约每天 $0.05–0.08；条数和话题越多越贵。app 的 设置 → 新闻 会显示估算，新闻页底部显示实际花费和本月合计。
+- 每日简报：20 条，Claude Sonnet 用批处理大约每天 $0.05–0.08；条数和兴趣越多越贵。打分和学习喜好是纯计算，不花钱。app 的 设置 → 新闻 会显示估算，新闻页底部显示实际花费和本月合计。
 - 深度报道：点一次生成一篇，大约 $0.1–0.2，生成过的不再花钱。
 - 邮件分析和记账用便宜的小模型，一般每月几美分。
 
@@ -194,5 +195,5 @@ DSAWidgets/          小组件和控制中心按钮（iOS）
 DSACapture/          相机控制键拍小票的扩展（iOS）
 Shared/              app 和扩展共用的代码
 DSATests/            App 的单元测试
-worker/              Cloudflare Worker：src/ai（各家 AI 的适配）、config.ts（用户配置）、news.ts（新闻）、topics.ts（话题和新闻源）
+worker/              Cloudflare Worker：src/ai（各家 AI 的适配）、config.ts（用户配置）、news.ts（新闻）、topics.ts（兴趣、地区和新闻源）、prefs.ts（学习喜好）
 ```

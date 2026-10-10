@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 新闻设置：话题、每天几条、关注的城市、汇率、「对你的影响」分哪几方面、自定义新闻源、生成时间
+/// 新闻设置：我的兴趣（入口）、每天几条、关注的城市、汇率、「对你的影响」分哪几方面、自定义新闻源、生成时间
 struct NewsSettingsView: View {
     @State private var store = ConfigStore.shared
     @State private var addingPlace = false
@@ -44,29 +44,17 @@ struct NewsSettingsView: View {
         }
     }
 
-    // MARK: - 话题
+    // MARK: - 兴趣
 
     private func topicsSection(_ config: Binding<UserConfig>) -> some View {
         Section {
-            ForEach(store.topics) { topic in
-                Toggle(isOn: Binding(
-                    get: { config.wrappedValue.news.topics.contains(topic.id) },
-                    set: { on in
-                        config.wrappedValue.news.topics.removeAll { $0 == topic.id }
-                        if on { config.wrappedValue.news.topics.append(topic.id) }
-                    }
-                )) {
-                    HStack {
-                        Label(NewsCategory(topic.id).name(.zh), systemImage: NewsCategory(topic.id).systemImage)
-                        Spacer()
-                        Text("\(topic.feeds) 个源").font(.caption).foregroundStyle(.secondary)
-                    }
-                }
+            NavigationLink {
+                InterestsView()
+            } label: {
+                LabeledContent("我的兴趣", value: "\(config.wrappedValue.news.topics.count) 个")
             }
-        } header: {
-            Text("话题")
         } footer: {
-            Text("简报从这些话题的新闻源里挑新闻，分类也按这些话题。话题越多，标题越多，每天花费越高（最多 40 个新闻源）。")
+            Text("简报按你的兴趣选新闻。每个兴趣几条由 AI 根据你的阅读情况每天自动调整，也可以自己拖。")
         }
     }
 

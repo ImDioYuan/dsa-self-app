@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { UserConfig } from "../src/config";
-import { localNow, parseFeed, repairReport, toArea, toCategory, toCity } from "../src/news";
-import { feedsFor, MAX_FEEDS, TOPICS } from "../src/topics";
+import { localNow, parseFeed, repairReport, toArea, toCategory, toCity, toRegion } from "../src/news";
+import { feedsFor, GROUPS, MAX_FEEDS, REGIONS, regionFeeds, TOPICS } from "../src/topics";
 
 describe("config", () => {
   it("fills every field with a default", () => {
@@ -17,12 +17,12 @@ describe("config", () => {
   it("drops bad values instead of failing", () => {
     const config = UserConfig.parse({
       timezone: "Mars/Olympus",
-      news: { count: 999, topics: ["tech_ai", "nope", "tech_ai"], briefTime: "25:00", fxPairs: ["aud/cny"] },
+      news: { count: 999, topics: ["ai", "nope", "ai"], briefTime: "25:00", fxPairs: ["aud/cny"] },
       ai: { tasks: { provider: "someone", model: "x" }, brief: { provider: "openai", model: "gpt-6.1-sol" } },
     });
     expect(config.timezone).toBe("UTC");
     expect(config.news.count).toBe(20);
-    expect(config.news.topics).toEqual(["tech_ai"]);
+    expect(config.news.topics).toEqual(["ai"]);
     expect(config.news.briefTime).toBe("08:00");
     expect(config.news.fxPairs).toEqual([]);
     expect(config.ai.tasks).toBeNull();
@@ -53,7 +53,7 @@ describe("config", () => {
       timezone: "Europe/London",
       watchRules: ["job emails"],
       news: {
-        topics: ["science", "europe"],
+        topics: ["science", "gaming"],
         customFeeds: [{ name: "Blog", url: "https://example.com/feed.xml" }],
         count: 12,
         places: [{ id: "london", nameZh: "伦敦", nameEn: "London", lat: 51.5, lon: -0.12, country: "GB", admin1: "England" }],
@@ -68,27 +68,65 @@ describe("config", () => {
   });
 });
 
-describe("topics", () => {
-  it("dedupes feeds shared by several topics and caps the total", () => {
-    const feeds = feedsFor(["conflict", "international"], []);
-    const urls = feeds.map((f) => f.url);
-    expect(new Set(urls).size).toBe(urls.length);
-    expect(feeds.find((f) => f.name === "BBC News")?.topic).toBe("conflict");
-    expect(feedsFor(TOPICS.map((t) => t.id), [{ name: "x", url: "https://x.example/rss" }]).length).toBeLessThanOrEqual(MAX_FEEDS);
+describe("catalog", () => {
+  it("migrates old topic ids and drops the old region topics", () => {
+    const config = UserConfig.parse({
+      news: { topics: ["conflict", "international", "tech_ai", "finance", "education", "australia", "china", "shipping"] },
+    });
+    expect(config.news.topics).toEqual(["conflict", "diplomacy", "ai", "markets", "economy", "education", "shipping"]);
+    // 只剩地区话题时用默认兴趣
+    expect(UserConfig.parse({ news: { topics: ["china"] } }).news.topics.length).toBeGreaterThan(0);
   });
 
-  it("topic ids are unique", () => {
+  it("ids, groups and related interests are consistent", () => {
     const ids = TOPICS.map((t) => t.id);
     expect(new Set(ids).size).toBe(ids.length);
+    for (const topic of TOPICS) {
+      expect(GROUPS.some((g) => g.id === topic.group)).toBe(true);
+      expect(topic.feeds.length).toBeGreaterThan(0);
+      for (const related of topic.related) expect(ids).toContain(related);
+    }
+    const regionIds = REGIONS.map((r) => r.id);
+    expect(new Set(regionIds).size).toBe(regionIds.length);
+    // 没有自己的源的国家用所在洲的
+    expect(regionFeeds("germany").length).toBeGreaterThan(0);
+  });
+
+  it("takes more feeds for interests with more stories, plus regions and candidates, up to the cap", () => {
+    const feeds = feedsFor({ allocation: { ai: 4, sports: 1, music: 0 }, regions: ["china"], candidates: ["gaming"], custom: [] });
+    const tags = feeds.map((f) => f.tag);
+    expect(tags.filter((t) => t === "topic/ai")).toHaveLength(4);
+    expect(tags.filter((t) => t === "topic/sports")).toHaveLength(1);
+    expect(tags).not.toContain("topic/music");
+    expect(tags).toContain("region/china");
+    expect(tags).toContain("explore/gaming");
+
+    const all = Object.fromEntries(TOPICS.map((t) => [t.id, 3]));
+    const many = feedsFor({ allocation: all, regions: ["us"], candidates: ["pets"], custom: [{ name: "x", url: "https://x.example/rss" }] });
+    expect(many.length).toBe(MAX_FEEDS);
+    expect(new Set(many.map((f) => f.url)).size).toBe(many.length);
+    // 地区、猜你喜欢、自定义源不会被兴趣挤掉
+    expect(many.some((f) => f.tag === "region/us")).toBe(true);
+    expect(many.some((f) => f.tag === "explore/pets")).toBe(true);
+    expect(many.some((f) => f.tag === "custom")).toBe(true);
   });
 });
 
 describe("normalizers", () => {
   it("maps stray categories onto the allowed ones", () => {
-    expect(toCategory("tech", ["tech_ai", "finance"])).toBe("tech_ai");
-    expect(toCategory("world", ["international"])).toBe("international");
-    expect(toCategory("whatever", ["science", "health"])).toBe("science");
+    expect(toCategory("tech", ["ai", "markets"])).toBe("ai");
+    expect(toCategory("topic/markets", ["ai", "markets"])).toBe("markets");
+    expect(toCategory("finance", ["ai", "markets"])).toBe("markets");
+    expect(toCategory("whatever", ["science", "medicine"])).toBe("science");
     expect(toCategory("custom", ["science", "other"])).toBe("other");
+  });
+
+  it("maps regions", () => {
+    expect(toRegion("China")).toBe("china");
+    expect(toRegion("Hong Kong")).toBe("china");
+    expect(toRegion("USA")).toBe("us");
+    expect(toRegion("region/middle east")).toBe("middle_east");
+    expect(toRegion("Atlantis")).toBe("global");
   });
 
   it("maps impact areas", () => {

@@ -71,7 +71,10 @@ struct UserConfig: Codable, Equatable, Sendable {
 struct ConfigResponse: Decodable, Sendable {
     var config: UserConfig
     var providers: [AIProvider]
+    /// 可选的兴趣
     var topics: [NewsTopic]
+    /// 兴趣的大类（旧版 Worker 没有）
+    var groups: [NewsTopicGroup]?
 }
 
 struct AIProvider: Decodable, Identifiable, Sendable {
@@ -93,12 +96,21 @@ struct AIProvider: Decodable, Identifiable, Sendable {
     var models: [Model]
 }
 
+/// 一个兴趣（Worker 的 topics.ts）
 struct NewsTopic: Decodable, Identifiable, Sendable {
     var id: String
     var nameZh: String
     var nameEn: String
-    /// 这个话题有几个新闻源
+    /// 大类 id（旧版 Worker 没有）
+    var group: String?
+    /// 这个兴趣有几个新闻源
     var feeds: Int
+}
+
+struct NewsTopicGroup: Decodable, Identifiable, Sendable {
+    var id: String
+    var nameZh: String
+    var nameEn: String
 }
 
 /// 三组功能
@@ -151,11 +163,11 @@ extension UserConfig {
         return (first, first.defaults[task.rawValue] ?? "")
     }
 
-    /// 每份简报大约多少美元：按选的话题估标题数，再按模型价格算（和实际花费可能差一半，只作参考）
+    /// 每份简报大约多少美元：按选的兴趣估标题数（加上常看地区和猜你喜欢的几个源），再按模型价格算（和实际花费可能差一半，只作参考）
     func estimatedBriefUSD(providers: [AIProvider], topics: [NewsTopic]) -> Double? {
         guard let (provider, model) = resolved(.brief, providers: providers),
               let price = provider.models.filter({ model.hasPrefix($0.id) }).max(by: { $0.id.count < $1.id.count }) else { return nil }
-        let feeds = min(40, topics.filter { news.topics.contains($0.id) }.map(\.feeds).reduce(0, +) + news.customFeeds.count)
+        let feeds = min(40, topics.filter { news.topics.contains($0.id) }.map(\.feeds).reduce(0, +) + news.customFeeds.count + 8)
         let headlines = Double(feeds) * 8
         let input = 2_500 + headlines * 70
         let output = 4_500 + Double(news.count) * 380
@@ -210,6 +222,7 @@ final class ConfigStore {
     var draft = UserConfig()
     private(set) var providers: [AIProvider] = []
     private(set) var topics: [NewsTopic] = []
+    private(set) var groups: [NewsTopicGroup] = []
     private(set) var isLoading = false
     private(set) var isSaving = false
     var error: String?
@@ -256,5 +269,6 @@ final class ConfigStore {
         draft = response.config
         providers = response.providers
         topics = response.topics
+        groups = response.groups ?? []
     }
 }

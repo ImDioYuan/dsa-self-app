@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// 点开一条新闻：摘要 + 深度报道（第一次打开时才生成）+ 原文链接
+/// 点开一条新闻：摘要 + 👍👎 + 深度报道（第一次打开时才生成）+ 原文链接。
+/// 点开、看了多久、打开原文、👍👎 都会发给 Worker，用来学习你的兴趣
 struct NewsDetailView: View {
     let route: NewsRoute
 
@@ -10,6 +11,7 @@ struct NewsDetailView: View {
     private var lang: NewsLanguage { NewsLanguage(rawValue: languageRaw) ?? .zh }
     private var item: NewsItem { route.item }
     private var key: String { NewsStore.reportKey(date: route.date, id: item.id) }
+    @State private var openedAt: Date?
 
     var body: some View {
         ScrollView {
@@ -35,14 +37,33 @@ struct NewsDetailView: View {
         }
         // 只取已经生成好的报道，不会自动生成（生成要花钱，点按钮才生成）
         .task { store.loadReport(date: route.date, id: item.id) }
+        .onAppear {
+            openedAt = .now
+            store.recordOpen(date: route.date, id: item.id)
+        }
+        .onDisappear {
+            if let openedAt { store.recordRead(date: route.date, id: item.id, seconds: Date.now.timeIntervalSince(openedAt)) }
+            openedAt = nil
+        }
+        // 点原文链接也记一次，然后照常用浏览器打开
+        .environment(\.openURL, OpenURLAction { url in
+            store.recordLink(date: route.date, id: item.id)
+            return .systemAction(url)
+        })
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                Label(item.category.name(lang), systemImage: item.category.systemImage)
+                Label(item.category.name(lang, names: store.brief?.categories), systemImage: item.category.systemImage)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(item.category.tint)
+                if let region = item.regionName(lang, names: store.brief?.regions) {
+                    Text(region).font(.caption).foregroundStyle(.secondary)
+                }
+                if item.isExplore {
+                    Pill(text: lang.pick("猜你喜欢", "You might like"), tint: .pink)
+                }
                 if item.affectsMe {
                     Pill(text: lang.pick("与你相关", "For you"), tint: .orange)
                 }
@@ -58,6 +79,15 @@ struct NewsDetailView: View {
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if item.isExplore, !item.reason(lang).isEmpty {
+                Label(item.reason(lang), systemImage: "sparkles")
+                    .font(.footnote)
+                    .foregroundStyle(.pink)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            VoteButtons(vote: store.votes[key] ?? 0, lang: lang) { value in
+                store.vote(date: route.date, id: item.id, value)
+            }
         }
         .textSelection(.enabled)
     }
@@ -213,5 +243,39 @@ private struct SourcesCard: View {
             }
         }
         return order.compactMap { byURL[$0] }
+    }
+}
+
+// MARK: - 👍👎
+
+/// 喜欢 / 不想看：比自动判断的分量重，第二天起这一类新闻会多推或少推
+private struct VoteButtons: View {
+    let vote: Int
+    let lang: NewsLanguage
+    let onVote: (Int) -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            button(value: 1, symbol: "hand.thumbsup", title: lang.pick("喜欢", "More like this"), tint: .green)
+            button(value: -1, symbol: "hand.thumbsdown", title: lang.pick("不想看", "Less like this"), tint: .orange)
+        }
+        .padding(.top, 2)
+    }
+
+    private func button(value: Int, symbol: String, title: String, tint: Color) -> some View {
+        let selected = vote == value
+        return Button {
+            onVote(value)
+        } label: {
+            Label(title, systemImage: selected ? "\(symbol).fill" : symbol)
+                .font(.footnote.weight(selected ? .semibold : .regular))
+                .foregroundStyle(selected ? AnyShapeStyle(tint) : AnyShapeStyle(.secondary))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(selected ? AnyShapeStyle(tint.opacity(0.15)) : AnyShapeStyle(.primary.opacity(0.06)), in: .capsule)
+        }
+        .buttonStyle(.plain)
+        .sensoryFeedback(.selection, trigger: selected)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
