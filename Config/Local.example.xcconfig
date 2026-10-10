@@ -1,0 +1,7 @@
+// 复制成 Config/Local.xcconfig 再填写（已被 .gitignore 忽略）
+
+// 换成你自己的反向域名，例如 com.yourname。App Group 名字全球唯一，不能和别人重复
+BUNDLE_ID_PREFIX = com.yourname
+
+// 你的 Apple 开发者团队 ID（10 位字母数字）。免费的 Personal Team 也可以
+DEVELOPMENT_TEAM = ABCDE12345

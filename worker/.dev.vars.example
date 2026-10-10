@@ -1,0 +1,7 @@
+# 复制成 .dev.vars 再填写，仅本地 `npm run dev` 使用。AI 的 key 只填你要用的那几家
+APP_TOKEN=换成一串随机字符，和 app 设置里填的一样
+ANTHROPIC_API_KEY=
+OPENAI_API_KEY=
+GEMINI_API_KEY=
+XAI_API_KEY=
+DEEPSEEK_API_KEY=

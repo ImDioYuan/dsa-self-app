@@ -1,0 +1,24 @@
+name = "dsa-worker"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# 密钥不要写在这里，用命令设置（只设置你要用的那几家 AI 的 key 即可）：
+#   npx wrangler secret put APP_TOKEN
+#   npx wrangler secret put ANTHROPIC_API_KEY   # Claude
+#   npx wrangler secret put OPENAI_API_KEY      # OpenAI
+#   npx wrangler secret put GEMINI_API_KEY      # Gemini
+#   npx wrangler secret put XAI_API_KEY         # Grok
+#   npx wrangler secret put DEEPSEEK_API_KEY    # DeepSeek
+# 本地开发时写在 worker/.dev.vars 里（已被 .gitignore 忽略）
+
+# 用户配置、每日新闻的简报、深度报道和每月花费都存在这里
+[[kv_namespaces]]
+binding = "NEWS"
+id = "换成你的 KV ID"  # npx wrangler kv namespace create NEWS 会显示
+
+# 每 15 分钟触发一次。代码按 App 里设置的时区和简报时间判断要不要生成：
+# Claude 提前一小时用 Batch API 半价生成，过了简报时间半小时还没好就改成马上生成；其他服务商提前一刻钟直接生成。
+# 失败了下一次触发再试，到简报时间后 3 小时为止
+[triggers]
+crons = ["*/15 * * * *"]

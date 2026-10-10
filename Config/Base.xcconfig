@@ -1,0 +1,10 @@
+// 提交到仓库的默认值。自己的开发者团队和 bundle ID 前缀写在 Local.xcconfig 里（不提交），
+// 照着 Local.example.xcconfig 复制一份填写即可。
+
+// 反向域名前缀：bundle ID 是 $(BUNDLE_ID_PREFIX).dsa，App Group 是 group.$(BUNDLE_ID_PREFIX).dsa
+BUNDLE_ID_PREFIX = com.example
+
+// Apple 开发者团队 ID（Xcode → Settings → Accounts 里能看到），只在模拟器上跑可以不填
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"

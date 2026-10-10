@@ -1,0 +1,140 @@
+name: DSA
+options:
+  deploymentTarget:
+    iOS: "26.0"
+    macOS: "26.0"
+  createIntermediateGroups: true
+  developmentLanguage: zh-Hans
+
+# 开发者团队和 bundle ID 前缀在 Config/Base.xcconfig + Config/Local.xcconfig 里
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  DSA:
+    type: application
+    supportedDestinations: [iOS, macOS]
+    sources:
+      - path: DSA
+      - path: Shared
+    dependencies:
+      # 小组件和相机按钮扩展只有 iOS 版
+      - target: DSAWidgets
+        destinationFilters: [iOS]
+      - target: DSACapture
+        destinationFilters: [iOS]
+    info:
+      path: DSA/Info.plist
+      properties:
+        CFBundleDisplayName: DSA
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleURLTypes:
+          - CFBundleURLName: $(PRODUCT_BUNDLE_IDENTIFIER)
+            CFBundleURLSchemes: [dsa]
+        # app、小组件共用的 App Group（代码里从这里读）
+        DSAAppGroup: group.$(BUNDLE_ID_PREFIX).dsa
+        # 启动画面底色：浅色淡紫、深色近黑（跟随系统），避免深色模式下闪白
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+        NSCalendarsFullAccessUsageDescription: DSA 会读取你的日历，把今天和接下来几天的约会放进每日任务。
+        NSRemindersFullAccessUsageDescription: DSA 会读取你的提醒事项，把有截止时间的事项放进每日任务。
+        NSCameraUsageDescription: DSA 用相机拍小票，自动识别金额和商家来记账。
+        BGTaskSchedulerPermittedIdentifiers:
+          - $(PRODUCT_BUNDLE_IDENTIFIER).refresh
+        UIBackgroundModes:
+          - fetch
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX).dsa
+        PRODUCT_NAME: DSA
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # macOS 沙盒权限（iOS 上会被忽略）
+        ENABLE_APP_SANDBOX: YES
+        ENABLE_OUTGOING_NETWORK_CONNECTIONS: YES
+        ENABLE_RESOURCE_ACCESS_CALENDARS: YES
+        # 导入 CSV：读取用户在文件选择器里选的文件
+        ENABLE_USER_SELECTED_FILES: readonly
+        ENABLE_HARDENED_RUNTIME: YES
+        # iOS 版和小组件共用 App Group（Mac 版不需要）
+        CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]: DSA/DSA-iOS.entitlements
+        CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]: DSA/DSA-iOS.entitlements
+    scheme:
+      testTargets:
+        - DSATests
+
+  # 桌面 / 锁屏小组件 + 控制中心按钮
+  DSAWidgets:
+    type: app-extension
+    supportedDestinations: [iOS]
+    sources:
+      - path: DSAWidgets
+      - path: Shared
+    info:
+      path: DSAWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: DSA
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        DSAAppGroup: group.$(BUNDLE_ID_PREFIX).dsa
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: DSAWidgets/DSAWidgets.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.$(BUNDLE_ID_PREFIX).dsa
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX).dsa.widgets
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) WIDGET_EXTENSION
+
+  # 相机按钮 / 锁屏「拍小票」的拍摄扩展
+  DSACapture:
+    type: extensionkit-extension
+    supportedDestinations: [iOS]
+    sources:
+      - path: DSACapture
+      - path: Shared
+    info:
+      path: DSACapture/Info.plist
+      properties:
+        CFBundleDisplayName: DSA 小票相机
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # 启动时系统画的底色也是深色，减少亮屏闪烁
+        UIUserInterfaceStyle: Dark
+        DSAAppGroup: group.$(BUNDLE_ID_PREFIX).dsa
+        NSCameraUsageDescription: DSA 用相机拍小票，自动识别金额和商家来记账。
+        EXAppExtensionAttributes:
+          EXExtensionPointIdentifier: com.apple.securecapture
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX).dsa.capture
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) CAPTURE_EXTENSION
+
+  DSATests:
+    type: bundle.unit-test
+    supportedDestinations: [iOS]
+    sources:
+      - path: DSATests
+    dependencies:
+      - target: DSA
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX).dsa.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/DSA.app/DSA
+        BUNDLE_LOADER: $(TEST_HOST)

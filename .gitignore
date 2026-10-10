@@ -1,0 +1,22 @@
+# Xcode（DSA.xcodeproj 由 xcodegen 根据 project.yml 生成）
+DSA.xcodeproj/
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+
+# 自己的签名设置（照 Config/Local.example.xcconfig 填）
+Config/Local.xcconfig
+
+# Worker
+worker/node_modules/
+worker/.dev.vars
+worker/.wrangler/
+# 自己的 KV ID（照 wrangler.example.toml 填）和个人资料备份
+worker/wrangler.toml
+worker/config.local.json
+
+# wrangler 在仓库根目录留下的账号缓存
+.wrangler/
+
+.DS_Store
