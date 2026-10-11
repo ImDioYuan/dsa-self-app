@@ -7,6 +7,8 @@ struct TasksView: View {
     @Query(sort: \TaskItem.createdAt, order: .reverse) private var items: [TaskItem]
 
     @State private var sync = TaskSyncService.shared
+    @State private var setup = SetupStatus()
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showAdd = false
     @State private var showDone = false
     @State private var expandedIDs: Set<PersistentIdentifier> = []
@@ -55,6 +57,10 @@ struct TasksView: View {
                         TodayHeader(openItems: open.map(\.main), doNow: matrixTasks.filter { $0.quadrant == .doNow }.count,
                                     isSyncing: sync.isSyncing)
 
+                        if setup.needsAttention {
+                            SetupReminderCard(missing: setup.missingRequired) { AppRouter.shared.openSetupGuide() }
+                        }
+
                         if !sync.errors.isEmpty {
                             SyncErrorCard(errors: sync.errors) {
                                 withAnimation { sync.dismissErrors() }
@@ -62,7 +68,7 @@ struct TasksView: View {
                         }
 
                         if open.isEmpty {
-                            EmptyTasksCard(onOpenSettings: { AppRouter.shared.tab = .settings })
+                            EmptyTasksCard(onOpenSettings: { AppRouter.shared.openSetupGuide() })
                         } else {
                             QuadrantMatrixCard(
                                 tasks: matrixTasks, scale: scale, horizonHours: $horizonHours,
@@ -145,8 +151,18 @@ struct TasksView: View {
             }
             .refreshable { await sync.sync(context: context) }
             .task { await sync.syncIfStale(context: context) }
+            // 回到这一页或回到前台时，看看必需的配置做完没有
+            .task(id: scenePhase) { await refreshSetup() }
+            .onAppear { setup = .current(context: context) }
             .sheet(isPresented: $showAdd) { AddTaskSheet() }
         }
+    }
+
+    private func refreshSetup() async {
+        setup = .current(context: context)
+        guard setup.workerFilled else { return }
+        await ConfigStore.shared.loadIfNeeded()
+        setup = .current(context: context)
     }
 
     /// 点气泡打开时带上气泡的位置。放在 item 里一起传：先改一个 @State 再用 isPresented 弹出，
@@ -480,11 +496,11 @@ private struct EmptyTasksCard: View {
                 .foregroundStyle(.secondary)
             Text("暂时没有要处理的事")
                 .font(.headline)
-            Text("在 设置 → 今日 里打开日历、提醒事项或添加订阅日历，要做的事会整理到这里。")
+            Text("在 设置 → 用前配置 里打开日历、连接 Gmail 或添加订阅日历，要做的事会整理到这里。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("打开设置", action: onOpenSettings)
+            Button("打开用前配置", action: onOpenSettings)
                 .buttonStyle(.glass)
                 .padding(.top, 4)
         }

@@ -6,6 +6,7 @@ struct LedgerSettingsView: View {
     @State private var scanner = EmailChargeScanner.shared
 
     private var gmailSignedIn: Bool { GoogleAuth.isSignedIn }
+    private var workerReady: Bool { (try? DSAClient.fromSettings()) != nil }
 
     /// 「上次检查：3 分钟前 · 新增 2 笔」
     private var status: String? {
@@ -36,23 +37,23 @@ struct LedgerSettingsView: View {
                             if scanner.isRunning { ProgressView().controlSize(.small) }
                         }
                     }
-                    .disabled(scanner.isRunning || !gmailSignedIn)
+                    .disabled(scanner.isRunning || !gmailSignedIn || !workerReady)
                     if let status {
                         Text(status).font(.footnote).foregroundStyle(scanner.lastSummary?.error == nil ? Color.secondary : Color.red)
                     }
                 }
             } footer: {
-                Text(gmailSignedIn ? "每天 8 点后第一次打开时，检查 Gmail 里的付款收据。" : "需要先在 设置 → Gmail 里登录。")
+                Text(gmailSignedIn && workerReady ? "每天 8 点后第一次打开时，检查 Gmail 里的付款收据。" : "需要先连接 Gmail 和 Worker。")
             }
 
-            Section {
-                NavigationLink {
-                    QuickEntryGuide()
-                } label: {
-                    Label("操作按钮 / Siri / Apple Pay", systemImage: "bolt.circle")
+            Section("快捷记账") {
+                ForEach([SetupStep.applePay, .quickEntry, .widgets, .csvImport].filter(SetupStep.visible.contains)) { step in
+                    NavigationLink {
+                        SetupStepView(step: step, showsSettingsLink: step == .csvImport)
+                    } label: {
+                        Label(step.title, systemImage: step.systemImage)
+                    }
                 }
-            } header: {
-                Text("快捷记账")
             }
         }
         .formStyle(.grouped)

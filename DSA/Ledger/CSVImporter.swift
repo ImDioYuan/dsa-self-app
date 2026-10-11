@@ -52,7 +52,7 @@ enum CSVImporter {
         var errorDescription: String? {
             switch self {
             case .unreadable: "文件读取失败，请确认是 CSV 文本文件"
-            case .unrecognized: "没认出日期和金额列。支持 CommBank、Westpac、NAB、ANZ、ING、Up、支付宝等导出的 CSV"
+            case .unrecognized: "没认出日期和金额列。支持 CommBank、Westpac、NAB、ANZ、ING、Up、支付宝、微信支付等导出的 CSV"
             case .empty: "文件里没有可以导入的交易"
             }
         }

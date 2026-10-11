@@ -23,10 +23,11 @@ struct AISettingsView: View {
                     }
                     .font(.subheadline)
                 }
+                NavigationLink("怎么添加 API key") { SetupStepView(step: .aiKeys, showsSettingsLink: false) }
             } header: {
                 Text("服务商")
             } footer: {
-                Text("用 npx wrangler secret put 添加 key，存在你的 Worker 里。添加后下拉刷新。")
+                Text("key 存在你的 Worker 里。添加后下拉刷新。")
             }
 
             ForEach(AITask.allCases) { task in

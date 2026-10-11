@@ -57,6 +57,11 @@ struct GmailSettingsView: View {
             } footer: {
                 Text("学校或公司邮箱转发到 Gmail 并归到这个标签后，会标成 Outlook 来源。")
             }
+
+            Section {
+                NavigationLink("怎么拿 Client ID") { SetupStepView(step: .gmail, showsSettingsLink: false) }
+                NavigationLink("怎么设置学校邮箱转发") { SetupStepView(step: .forwarding, showsSettingsLink: false) }
+            }
         }
         .formStyle(.grouped)
         .navigationTitle("Gmail")

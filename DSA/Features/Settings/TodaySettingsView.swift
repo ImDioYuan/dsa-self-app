@@ -1,3 +1,4 @@
+import EventKit
 import SwiftData
 import SwiftUI
 
@@ -14,6 +15,9 @@ struct TodaySettingsView: View {
     @State private var icalFeeds = AppSettings.icalFeeds
     @State private var addingFeed = false
     @State private var store = ConfigStore.shared
+    @State private var calendarStatus = EKEventStore.authorizationStatus(for: .event)
+    @State private var remindersStatus = EKEventStore.authorizationStatus(for: .reminder)
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         Form {
@@ -24,6 +28,9 @@ struct TodaySettingsView: View {
         .formStyle(.grouped)
         .navigationTitle("今日")
         .configEditing()
+        // 打开开关后同步时会弹出权限请求，同步完再看一次授权状态
+        .onChange(of: sync.isSyncing) { _, syncing in if !syncing { refreshPermissions() } }
+        .onAppear(perform: refreshPermissions)
         .sheet(isPresented: $addingFeed) {
             AddICalFeedSheet { feed in
                 icalFeeds.append(feed)
@@ -41,6 +48,18 @@ struct TodaySettingsView: View {
             }
             Toggle(isOn: $useReminders) {
                 Label("提醒事项", systemImage: "checklist")
+            }
+            if let denied = deniedPermission {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("\(denied)没有权限，开着也读不到", systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                    #if os(iOS)
+                    Button("去系统设置打开") { openURL(URL(string: UIApplication.openSettingsURLString)!) }
+                        .font(.footnote)
+                        .buttonStyle(.borderless)
+                    #endif
+                }
             }
             ForEach(icalFeeds) { feed in
                 Label {
@@ -123,6 +142,19 @@ struct TodaySettingsView: View {
         }
     }
 
+    /// 开关开着但被拒绝了权限的那一项
+    private var deniedPermission: String? {
+        let denied: (EKAuthorizationStatus) -> Bool = { $0 == .denied || $0 == .restricted || $0 == .writeOnly }
+        if useCalendar && denied(calendarStatus) { return "日历" }
+        if useReminders && denied(remindersStatus) { return "提醒事项" }
+        return nil
+    }
+
+    private func refreshPermissions() {
+        calendarStatus = EKEventStore.authorizationStatus(for: .event)
+        remindersStatus = EKEventStore.authorizationStatus(for: .reminder)
+    }
+
     /// 订阅日历改了：存下来、马上同步（删光了就移除它带进来的任务）
     private func feedsChanged() {
         AppSettings.icalFeeds = icalFeeds
@@ -160,13 +192,9 @@ private struct AddICalFeedSheet: View {
                     TextField("名字，例如 Moodle、课表", text: $name)
                     TextField("https:// 或 webcal:// 开头的链接", text: $url, axis: .vertical)
                         .urlInput()
-                } footer: {
-                    Text("""
-                    Moodle：Calendar → Export calendar（All courses、Recent and next 60 days）→ Get calendar URL
-                    Canvas：Calendar → Calendar Feed
-                    Google 日历：日历设置 → iCal 格式的私密地址
-                    Outlook：日历设置 → 发布日历 → ICS
-                    """)
+                }
+                Section {
+                    NavigationLink("各平台怎么拿链接") { SetupStepView(step: .icalFeeds, showsSettingsLink: false) }
                 }
             }
             .formStyle(.grouped)

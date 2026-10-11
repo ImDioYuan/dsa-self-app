@@ -11,6 +11,9 @@ struct SettingsView: View {
     @State private var gmailSignedIn = GoogleAuth.isSignedIn
     @State private var gmailEmail = GoogleAuth.tokens?.email
     @State private var config = ConfigStore.shared
+    @State private var router = AppRouter.shared
+    @State private var setup = SetupStatus()
+    @Environment(\.modelContext) private var context
 
     /// 个人资料、AI 模型、新闻存在 Worker 上，没填好 Worker 时点不了
     private var workerReady: Bool { !workerURL.isEmpty && hasToken }
@@ -18,6 +21,12 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    row("用前配置", icon: "checklist", value: setupSummary) {
+                        SetupGuideView()
+                    }
+                }
+
                 Section {
                     row("个人资料", icon: "person.crop.circle", value: config.saved?.name ?? "") {
                         ProfileSettingsView()
@@ -56,10 +65,12 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
             .navigationTitle("设置")
+            .navigationDestination(isPresented: $router.showSetupGuide) { SetupGuideView() }
             // 从 Worker、Gmail 页回来时更新右边的状态
             .onAppear(perform: refresh)
             .task(id: workerReady) {
                 if workerReady { await config.loadIfNeeded() }
+                refresh()
             }
         }
     }
@@ -79,10 +90,16 @@ struct SettingsView: View {
         }
     }
 
+    private var setupSummary: String {
+        let missing = setup.missingRequired.count
+        return missing == 0 ? "已完成" : "必需还差 \(missing) 步"
+    }
+
     private func refresh() {
         hasToken = !(AppSettings.workerToken ?? "").isEmpty
         gmailSignedIn = GoogleAuth.isSignedIn
         gmailEmail = GoogleAuth.tokens?.email
+        setup = .current(context: context)
     }
 }
 
@@ -112,7 +129,11 @@ struct WorkerSettingsView: View {
                     statusLabel
                 }
             } footer: {
-                Text("你自己部署的 Cloudflare Worker，部署方法见 README。")
+                Text("你自己部署的 Cloudflare Worker。")
+            }
+
+            Section {
+                NavigationLink("怎么部署") { SetupStepView(step: .deployWorker, showsSettingsLink: false) }
             }
         }
         .formStyle(.grouped)

@@ -59,7 +59,7 @@ xcodegen generate && open DSA.xcodeproj
 
 Run on a simulator or "My Mac". A free Apple ID works for your own devices (apps expire after 7 days). The App Group name is derived from your bundle ID prefix, so it must be unique.
 
-**2. Worker**
+**2. Worker**（需要 Node.js 22 或更新版本和免费的 Cloudflare 账号）
 
 ```bash
 cd worker
@@ -72,7 +72,7 @@ npx wrangler secret put ANTHROPIC_API_KEY      # and/or OPENAI_API_KEY, GEMINI_A
 npx wrangler deploy
 ```
 
-**3. In the app** (the 设置 tab): enter the Worker URL and `APP_TOKEN` under Worker, then fill in 个人资料 (profile), AI 模型 (provider and model per feature), 今日 (calendars, email watch rules) and 新闻 (interests, number of stories, cities, FX pairs, time).
+**3. In the app** (the 设置 tab): 设置 → 用前配置 is an in-app checklist with step-by-step guides for everything below (Worker, each AI provider's key, Gmail, calendars, Apple Pay automation…) and shows which steps are done. Enter the Worker URL and `APP_TOKEN` under Worker, then fill in 个人资料 (profile), AI 模型 (provider and model per feature), 今日 (calendars, email watch rules) and 新闻 (interests, number of stories, cities, FX pairs, time).
 
 **4. Optional**: Gmail (create an iOS OAuth client in Google Cloud with your bundle ID, enable the Gmail API, paste the client ID in 设置 → Gmail), subscribed calendars, forwarding a school or work mailbox to a Gmail label.
 
@@ -134,12 +134,16 @@ npx wrangler kv namespace create NEWS          # 记下显示的 id
 cp wrangler.example.toml wrangler.toml          # 把 KV id 填进去
 npx wrangler secret put APP_TOKEN              # 自己生成一串随机字符，例如 openssl rand -hex 24 的输出
 npx wrangler secret put ANTHROPIC_API_KEY      # 想用哪家就设置哪家：OPENAI_API_KEY、GEMINI_API_KEY、XAI_API_KEY、DEEPSEEK_API_KEY
-npx wrangler deploy                             # 部署后会显示 https://dsa-worker.<账号>.workers.dev
+npx wrangler deploy                             # 第一次会让你起一个 workers.dev 子域名；部署后显示 https://dsa-worker.<子域名>.workers.dev
 ```
+
+各家 API key 去哪里拿（都要先充值，Gemini 有免费额度）：Claude 在 platform.claude.com/settings/keys，OpenAI 在 platform.openai.com/api-keys，Gemini 在 aistudio.google.com/apikey，Grok 在 console.x.ai，DeepSeek 在 platform.deepseek.com/api_keys。设置后马上生效，不用重新部署。
 
 本地调试：把 `.dev.vars.example` 复制成 `.dev.vars` 并填写，然后运行 `npm run dev`。
 
 **3. App 里的设置**
+
+app 里 设置 → **用前配置** 有完整的图文步骤（上面的部署、每家 AI 的 key、Gmail、订阅日历、Apple Pay 自动记账等），每一步会显示做完没有；必需的几步没做完时，「今日」顶部会提醒。
 
 设置在底部的「设置」标签里：
 1. Worker：填地址和 `APP_TOKEN`，点「测试连接」。
@@ -153,9 +157,10 @@ npx wrangler deploy                             # 部署后会显示 https://dsa
 
 1. 打开 console.cloud.google.com，新建项目
 2. APIs & Services → Library → 搜索 **Gmail API** → Enable
-3. Google Auth Platform → Branding：填 app 名字和你的邮箱；Audience 选 **External**，在 Test users 里加上你的 Gmail 地址
-4. Clients → Create client → Application type 选 **iOS** → Bundle ID 填 `你的前缀.dsa`（和 `Config/Local.xcconfig` 一致）→ Create
-5. 复制 Client ID（形如 `123-xxx.apps.googleusercontent.com`），粘贴到 app 的 设置 → Gmail，点「登录 Gmail」
+3. Google Auth platform → **Get Started**：填 app 名称和你的邮箱；Audience 选 **External**；填联系邮箱；同意条款后 Create
+4. Audience → Test users → Add users，加上你的 Gmail 地址
+5. Clients → Create client → Application type 选 **iOS** → Bundle ID 填 `你的前缀.dsa`（和 `Config/Local.xcconfig` 一致，app 的用前配置里也能直接复制）→ Create
+6. 复制 Client ID（形如 `123-xxx.apps.googleusercontent.com`），粘贴到 app 的 设置 → Gmail，点「登录 Gmail」；看到「Google 未验证此应用」时点继续
 
 项目保持 Testing 状态即可；测试状态下登录 7 天后失效，到时候在设置里重新登录。
 
@@ -163,10 +168,10 @@ npx wrangler deploy                             # 部署后会显示 https://dsa
 
 设置 → 今日 → 添加订阅日历，粘贴 iCal 链接并起个名字（任务上会显示这个名字）：
 
-- Moodle：Calendar → Import or export calendars → Export calendar，选 All courses 和 Recent and next 60 days → Get calendar URL
-- Canvas：Calendar → Calendar Feed
-- Google 日历：日历的设置 → 「iCal 格式的私密地址」
-- Outlook：设置 → 日历 → 共享日历 → 发布日历 → ICS 链接
+- Moodle：Calendar → 页面底部 Import or export calendars → Export calendar，Events to export 选 All events，Time period 选 Recent and next 60 days → Get calendar URL → Copy URL
+- Canvas：Calendar → 右侧栏 Calendar Feed
+- Google 日历（网页版）：设置 → 选日历 → 集成日历 →「iCal 格式的私密地址」
+- Outlook（网页版）：设置 → 日历 → 共享日历 → 发布日历 → 复制 ICS 链接
 
 ### 学校 / 公司邮箱转发到 Gmail（可选）
 

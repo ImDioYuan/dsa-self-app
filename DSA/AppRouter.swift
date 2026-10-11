@@ -16,6 +16,8 @@ final class AppRouter {
     var pendingDraft: EntryDraft?
     /// 相机按钮拍的小票照片，记账页拿到后自动识别
     var pendingReceipt: Data?
+    /// 设置页推入「用前配置」（从「今日」的提醒卡片过来）
+    var showSetupGuide = false
 
     private init() {}
 
@@ -23,6 +25,12 @@ final class AppRouter {
     func quickAdd(_ draft: EntryDraft = EntryDraft()) {
         tab = .ledger
         pendingDraft = draft
+    }
+
+    /// 切到设置并打开用前配置
+    func openSetupGuide() {
+        tab = .settings
+        showSetupGuide = true
     }
 
     /// 切到记账页并识别这张小票

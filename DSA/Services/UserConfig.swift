@@ -237,8 +237,11 @@ final class ConfigStore {
         isLoading = true
         defer { isLoading = false }
         do {
-            apply(try await DSAClient.fromSettings().config())
+            let response = try await DSAClient.fromSettings().config()
+            apply(response)
             error = nil
+            // Worker 默认按 UTC 算简报时间；时区和这台设备不一样时保存一次（保存时会带上设备时区）
+            if response.config.timezone != TimeZone.current.identifier { await save() }
         } catch DSAClient.ClientError.http(404, _) {
             error = "Worker 是旧版本，请先在 worker 目录运行 npx wrangler deploy 部署新版"
         } catch {
