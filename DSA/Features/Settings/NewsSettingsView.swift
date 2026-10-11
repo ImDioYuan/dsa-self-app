@@ -1,8 +1,10 @@
 import SwiftUI
 
-/// 新闻设置：我的兴趣（入口）、简报（每天几条、几点前生成好）、关注的城市、汇率、「对你的影响」分哪几方面、自定义新闻源
+/// 新闻设置：显示语言、我的兴趣（入口）、简报（每天几条、几点前生成好）、关注的城市、汇率、「对你的影响」分哪几方面、自定义新闻源
 struct NewsSettingsView: View {
     @State private var store = ConfigStore.shared
+    /// 只存在这台设备上，不用保存到 Worker
+    @AppStorage(NewsLanguage.storageKey) private var languageRaw = NewsLanguage.zh.rawValue
     @State private var addingPlace = false
     @State private var editingInterest: InterestDraft?
     @State private var fxBase = Currency.AUD
@@ -12,6 +14,7 @@ struct NewsSettingsView: View {
 
     var body: some View {
         ConfigForm(title: "新闻") { $config in
+            languageSection
             topicsSection($config)
             briefSection($config)
             placesSection($config)
@@ -40,6 +43,20 @@ struct NewsSettingsView: View {
                 }
                 store.draft.news.interests = list
             }
+        }
+    }
+
+    // MARK: - 语言
+
+    private var languageSection: some View {
+        Section {
+            Picker("显示语言", selection: $languageRaw) {
+                ForEach(NewsLanguage.allCases, id: \.self) { language in
+                    Text(language.title).tag(language.rawValue)
+                }
+            }
+        } footer: {
+            Text("新闻页和深度报道用这种语言显示。每份简报都同时写了中英文，切换马上生效。")
         }
     }
 

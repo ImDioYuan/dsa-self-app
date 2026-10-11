@@ -56,7 +56,6 @@ struct NewsView: View {
             }
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
-                    NewsLanguagePicker(selection: $languageRaw)
                     Button {
                         showingInterests = true
                     } label: {
@@ -84,45 +83,6 @@ struct NewsView: View {
             .refreshable { await store.refresh() }
             .task { store.refreshIfStale() }
         }
-    }
-}
-
-// MARK: - 中 / EN 切换
-
-/// 不用系统的分段控件：它自带一层玻璃底，放进工具栏会和工具栏的玻璃胶囊叠成两圈。
-/// 这里只画选中的那一小块，外面的玻璃交给工具栏
-struct NewsLanguagePicker: View {
-    @Binding var selection: String
-    @Namespace private var thumb
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(NewsLanguage.allCases, id: \.self) { language in
-                let selected = selection == language.rawValue
-                Button {
-                    // 不包 withAnimation：整页 20 多张玻璃卡片一起做换行动画会很卡，只让选中块滑过去
-                    selection = language.rawValue
-                } label: {
-                    Text(language == .zh ? "中" : "EN")
-                        .font(.subheadline.weight(selected ? .semibold : .regular))
-                        .foregroundStyle(selected ? .primary : .secondary)
-                        .frame(width: 38, height: 30)
-                        .background {
-                            if selected {
-                                Capsule()
-                                    .fill(.primary.opacity(0.1))
-                                    .matchedGeometryEffect(id: "thumb", in: thumb)
-                            }
-                        }
-                        .contentShape(.capsule)
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-            }
-        }
-        .animation(.snappy, value: selection)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("语言")
     }
 }
 

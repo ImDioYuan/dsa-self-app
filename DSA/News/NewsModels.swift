@@ -1,11 +1,13 @@
 import Foundation
 import SwiftUI
 
-/// 简报和深度报道的显示语言，一键切换
+/// 简报和深度报道的显示语言（设置 → 新闻）。简报本身中英文都有，切换不用重新生成
 enum NewsLanguage: String, CaseIterable, Sendable {
     case zh, en
 
     static let storageKey = "news.language"
+
+    var title: String { self == .zh ? "中文" : "English" }
 
     /// 选当前语言的文字；这一种是空的就用另一种
     func pick(_ zh: String, _ en: String) -> String {

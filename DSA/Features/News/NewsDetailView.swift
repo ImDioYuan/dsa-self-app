@@ -30,11 +30,6 @@ struct NewsDetailView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                NewsLanguagePicker(selection: $languageRaw)
-            }
-        }
         // 只取已经生成好的报道，不会自动生成（生成要花钱，点按钮才生成）
         .task { store.loadReport(date: route.date, id: item.id) }
         .onAppear {

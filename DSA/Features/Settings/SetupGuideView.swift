@@ -128,8 +128,10 @@ struct SetupStatus {
 /// 设置 → 用前配置：按步骤列出要做的配置，每一步显示做完没有，点进去是教程
 struct SetupGuideView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
     @State private var status = SetupStatus()
     @State private var store = ConfigStore.shared
+    @State private var showingWizard = false
 
     var body: some View {
         Form {
@@ -140,6 +142,14 @@ struct SetupGuideView: View {
                     systemImage: missing == 0 ? "checkmark.seal.fill" : "list.bullet.clipboard"
                 )
                 .foregroundStyle(missing == 0 ? Color.green : Color.primary)
+                Button {
+                    OnboardingTour.shared.finish()
+                    showingWizard = true
+                } label: {
+                    Text("一步一步配置").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.glassProminent)
+                .tourTarget(.wizardButton)
             } footer: {
                 Text("按顺序做完「必需」的几步就能用；其他按需要配置。")
             }
@@ -155,10 +165,23 @@ struct SetupGuideView: View {
                     }
                 }
             }
+
+            Section {
+                Button("重新看新手引导") {
+                    dismiss()
+                    OnboardingTour.shared.restart()
+                }
+            }
         }
         .formStyle(.grouped)
         .navigationTitle("用前配置")
-        .onAppear(perform: refresh)
+        .onAppear {
+            refresh()
+            OnboardingTour.shared.guideAppeared()
+        }
+        .sheet(isPresented: $showingWizard, onDismiss: refresh) {
+            SetupWizardView()
+        }
         .task {
             guard status.workerFilled else { return }
             await store.loadIfNeeded()
@@ -418,17 +441,14 @@ func copyToPasteboard(_ text: String) {
 
 // MARK: - AI 服务商
 
-private struct ProviderRow: View {
+struct ProviderRow: View {
     let provider: ProviderGuide
     @State private var store = ConfigStore.shared
 
     var body: some View {
         LabeledContent {
             if store.providers.first(where: { $0.id == provider.id })?.configured == true {
-                Label("已配置", systemImage: "checkmark.circle.fill")
-                    .labelStyle(.titleAndIcon)
-                    .foregroundStyle(.green)
-                    .font(.subheadline)
+                StepStateView(state: .done("已配置"))
             }
         } label: {
             VStack(alignment: .leading, spacing: 2) {

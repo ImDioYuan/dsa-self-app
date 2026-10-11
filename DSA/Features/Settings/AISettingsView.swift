@@ -8,20 +8,15 @@ struct AISettingsView: View {
         ConfigForm(title: "AI 模型") { $config in
             Section {
                 ForEach(store.providers) { provider in
+                    // 右边不能用 Label：表单会把它当成这一行的标题来排，行被撑高、分隔线只剩一截
                     LabeledContent {
-                        if provider.configured {
-                            Label("已配置", systemImage: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                        } else {
-                            Text("未配置").foregroundStyle(.secondary)
-                        }
+                        StepStateView(state: provider.configured ? .done("已配置") : .todo("未配置"))
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(provider.name)
                             Text(provider.keyName).font(.caption.monospaced()).foregroundStyle(.secondary)
                         }
                     }
-                    .font(.subheadline)
                 }
                 NavigationLink("怎么添加 API key") { SetupStepView(step: .aiKeys, showsSettingsLink: false) }
             } header: {

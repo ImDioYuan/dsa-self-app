@@ -4,18 +4,27 @@ import SwiftUI
 struct ProfileSettingsView: View {
     var body: some View {
         ConfigForm(title: "个人资料") { $config in
-            Section("称呼") {
-                TextField("例如：小明", text: $config.name)
-            }
+            ProfileSections(config: $config)
+        }
+    }
+}
 
-            Section {
-                TextEditor(text: $config.about)
-                    .frame(minHeight: 160)
-            } header: {
-                Text("关于我")
-            } footer: {
-                Text("身份、城市、学校专业、投资、在找的工作……写得越具体，新闻和提醒越准。")
-            }
+/// 称呼和关于我两栏。设置 → 个人资料和新手引导共用
+struct ProfileSections: View {
+    @Binding var config: UserConfig
+
+    var body: some View {
+        Section("称呼") {
+            TextField("例如：小明", text: $config.name)
+        }
+
+        Section {
+            TextEditor(text: $config.about)
+                .frame(minHeight: 160)
+        } header: {
+            Text("关于我")
+        } footer: {
+            Text("身份、城市、学校专业、投资、在找的工作……写得越具体，新闻和提醒越准。")
         }
     }
 }

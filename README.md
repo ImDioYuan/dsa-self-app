@@ -72,7 +72,7 @@ npx wrangler secret put ANTHROPIC_API_KEY      # and/or OPENAI_API_KEY, GEMINI_A
 npx wrangler deploy
 ```
 
-**3. In the app** (the 设置 tab): 设置 → 用前配置 is an in-app checklist with step-by-step guides for everything below (Worker, each AI provider's key, Gmail, calendars, Apple Pay automation…) and shows which steps are done. Enter the Worker URL and `APP_TOKEN` under Worker, then fill in 个人资料 (profile), AI 模型 (provider and model per feature), 今日 (calendars, email watch rules) and 新闻 (interests, number of stories, cities, FX pairs, time).
+**3. In the app** (the 设置 tab): the first time you open the app, a short tour points you to 设置 → 用前配置 and its 一步一步配置 wizard, which walks through the four required steps one page at a time. 设置 → 用前配置 is also an in-app checklist with step-by-step guides for everything below (Worker, each AI provider's key, Gmail, calendars, Apple Pay automation…) and shows which steps are done. Enter the Worker URL and `APP_TOKEN` under Worker, then fill in 个人资料 (profile), AI 模型 (provider and model per feature), 今日 (calendars, email watch rules) and 新闻 (display language, interests, number of stories, cities, FX pairs, time).
 
 **4. Optional**: Gmail (create an iOS OAuth client in Google Cloud with your bundle ID, enable the Gmail API, paste the client ID in 设置 → Gmail), subscribed calendars, forwarding a school or work mailbox to a Gmail label.
 
@@ -143,14 +143,16 @@ npx wrangler deploy                             # 第一次会让你起一个 wo
 
 **3. App 里的设置**
 
-app 里 设置 → **用前配置** 有完整的图文步骤（上面的部署、每家 AI 的 key、Gmail、订阅日历、Apple Pay 自动记账等），每一步会显示做完没有；必需的几步没做完时，「今日」顶部会提醒。
+第一次打开 app 时有新手引导：先指给你看底部的「设置」，再带你到 设置 → **用前配置** →「一步一步配置」，一页一步做完必需的 4 步（部署 Worker、连接、AI 的 key、个人资料），能在 app 里填的直接在那一页填。以后想再看一遍，在用前配置页底部点「重新看新手引导」。
+
+用前配置 里还有完整的图文步骤（上面的部署、每家 AI 的 key、Gmail、订阅日历、Apple Pay 自动记账等），每一步会显示做完没有；必需的几步没做完时，「今日」顶部会提醒。
 
 设置在底部的「设置」标签里：
 1. Worker：填地址和 `APP_TOKEN`，点「测试连接」。
 2. AI 模型：给三组功能选服务商和模型。
 3. 个人资料：称呼、关于我（身份、城市、关心的事）。
 4. 今日：苹果日历、提醒事项、订阅日历，以及邮件特别关注的规则。
-5. 新闻：我的兴趣、每天几条和生成时间、关注的城市、汇率、「对你的影响」分哪几方面、自定义 RSS。
+5. 新闻：显示语言（中文 / English）、我的兴趣、每天几条和生成时间、关注的城市、汇率、「对你的影响」分哪几方面、自定义 RSS。
 6. 我的兴趣（设置 → 新闻，或新闻页右上角）：选兴趣。第一天每个兴趣平均分条数，之后 AI 每天根据你点开了哪些新闻、看了多久、有没有 👍👎 自动调整长条，你也可以自己拖。长条下面是这个兴趣「最近爱看」的内容，点一下可以删改。阅读记录只存在你自己的 Worker 里；按爱看的内容搜新闻时，搜索词会发给 Bing 新闻。
 
 ### Gmail（可选）

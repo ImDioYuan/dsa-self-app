@@ -91,6 +91,10 @@ struct RootView: View {
 
     var body: some View {
         tabs
+            // 第一次打开时的新手引导，盖在标签栏上面
+            .overlay { TourOverlay() }
+            .task { OnboardingTour.shared.startIfNeeded() }
+            .onChange(of: router.tab) { _, tab in OnboardingTour.shared.tabChanged(to: tab) }
             // 邮件自动记账：每天 8 点后第一次打开 / 回到前台时检查（当天已检查过就跳过）
             .task { await EmailChargeScanner.shared.runIfDue() }
             .onChange(of: scenePhase) { _, phase in

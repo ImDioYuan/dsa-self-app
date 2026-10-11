@@ -7,6 +7,7 @@ struct SettingsView: View {
 
     @AppStorage(SettingsKey.workerURL) private var workerURL = ""
     @AppStorage(ThemeStore.appearanceKey, store: ThemeStore.defaults) private var appearanceRaw = AppearanceMode.system.rawValue
+    @AppStorage(NewsLanguage.storageKey) private var newsLanguageRaw = NewsLanguage.zh.rawValue
     @State private var hasToken = !(AppSettings.workerToken ?? "").isEmpty
     @State private var gmailSignedIn = GoogleAuth.isSignedIn
     @State private var gmailEmail = GoogleAuth.tokens?.email
@@ -25,6 +26,7 @@ struct SettingsView: View {
                     row("用前配置", icon: "checklist", value: setupSummary) {
                         SetupGuideView()
                     }
+                    .tourTarget(.setupRow)
                 }
 
                 Section {
@@ -57,7 +59,7 @@ struct SettingsView: View {
                     row("记账", icon: "creditcard", value: "自动记账 · 快捷方式") {
                         LedgerSettingsView()
                     }
-                    row("新闻", icon: "newspaper", value: "兴趣 · 城市 · 汇率") {
+                    row("新闻", icon: "newspaper", value: "\((NewsLanguage(rawValue: newsLanguageRaw) ?? .zh).title) · 兴趣 · 城市") {
                         NewsSettingsView()
                     }
                     .disabled(!workerReady)
@@ -106,31 +108,9 @@ struct SettingsView: View {
 // MARK: - Worker：地址、口令、测试连接
 
 struct WorkerSettingsView: View {
-    @AppStorage(SettingsKey.workerURL) private var workerURL = ""
-    @State private var token = AppSettings.workerToken ?? ""
-    @State private var status: Status = .idle
-
-    enum Status: Equatable {
-        case idle, checking, ok
-        case failed(String)
-    }
-
     var body: some View {
         Form {
-            Section {
-                TextField("https://dsa-worker.<你的账号>.workers.dev", text: $workerURL)
-                    .urlInput()
-                SecureField("访问口令 APP_TOKEN", text: $token)
-                    .onChange(of: token) { _, newValue in AppSettings.workerToken = newValue }
-                HStack {
-                    Button("测试连接", action: check)
-                        .disabled(workerURL.isEmpty || token.isEmpty || status == .checking)
-                    Spacer()
-                    statusLabel
-                }
-            } footer: {
-                Text("你自己部署的 Cloudflare Worker。")
-            }
+            WorkerConnectionSection()
 
             Section {
                 NavigationLink("怎么部署") { SetupStepView(step: .deployWorker, showsSettingsLink: false) }
@@ -139,12 +119,56 @@ struct WorkerSettingsView: View {
         .formStyle(.grouped)
         .navigationTitle("Worker")
     }
+}
+
+/// 地址、口令和「测试连接」。设置 → Worker 和新手引导共用；连上后顺便读取 Worker 上的配置
+struct WorkerConnectionSection: View {
+    var footer = "你自己部署的 Cloudflare Worker。"
+
+    @AppStorage(SettingsKey.workerURL) private var workerURL = ""
+    @State private var token = AppSettings.workerToken ?? ""
+    @State private var status: Status = .idle
+    @FocusState private var editingToken: Bool
+
+    enum Status: Equatable {
+        case idle, checking, ok
+        case failed(String)
+    }
+
+    var body: some View {
+        Section {
+            TextField("https://dsa-worker.<你的账号>.workers.dev", text: $workerURL)
+                .urlInput()
+            // 不用 SecureField：系统会把地址和口令当成用户名和密码，离开页面时弹「存储密码」。
+            // 改成普通输入框，不在输入时用圆点盖住
+            TextField("访问口令 APP_TOKEN", text: $token)
+                .urlInput()
+                .focused($editingToken)
+                .foregroundStyle(editingToken ? Color.primary : Color.clear)
+                .overlay(alignment: .leading) {
+                    if !editingToken, !token.isEmpty {
+                        Text(String(repeating: "•", count: min(token.count, 24)))
+                            .lineLimit(1)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .onChange(of: token) { _, newValue in AppSettings.workerToken = newValue }
+            HStack {
+                Button("测试连接", action: check)
+                    .disabled(workerURL.isEmpty || token.isEmpty || status == .checking)
+                Spacer()
+                statusLabel
+            }
+        } footer: {
+            Text(footer)
+        }
+    }
 
     @ViewBuilder private var statusLabel: some View {
         switch status {
         case .idle: EmptyView()
         case .checking: ProgressView().controlSize(.small)
-        case .ok: Label("已连接", systemImage: "checkmark.circle.fill").foregroundStyle(.green).font(.footnote)
+        case .ok: StepStateView(state: .done("已连接"))
         case let .failed(message): Text(message).foregroundStyle(.red).font(.footnote).lineLimit(2)
         }
     }
@@ -155,6 +179,7 @@ struct WorkerSettingsView: View {
             do {
                 try await DSAClient.fromSettings().health()
                 status = .ok
+                await ConfigStore.shared.load()
             } catch {
                 status = .failed(error.localizedDescription)
             }

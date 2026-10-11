@@ -68,7 +68,7 @@ enum SetupStep: String, CaseIterable, Identifiable {
         case .widgets: "小组件"
         case .csvImport: "导入银行流水"
         case .interests: "选新闻兴趣"
-        case .newsBasics: "城市 · 汇率 · 对你的影响"
+        case .newsBasics: "语言 · 城市 · 汇率 · 对你的影响"
         case .backgroundRefresh: "后台 App 刷新"
         }
     }
@@ -129,7 +129,7 @@ enum SetupStep: String, CaseIterable, Identifiable {
         case .interests:
             "每天早上的新闻简报按你的兴趣挑新闻。"
         case .newsBasics:
-            "简报里还有关注城市的天气、汇率，和「对你的影响」。"
+            "选新闻用什么语言显示；简报里还有关注城市的天气、汇率，和「对你的影响」。"
         case .backgroundRefresh:
             "打开后，iPhone 会在后台提前同步邮件和日历、下载早上的简报，打开 app 就能看。"
         }
@@ -305,6 +305,7 @@ enum SetupStep: String, CaseIterable, Identifiable {
         case .newsBasics:
             [
                 .step("打开 设置 → 新闻"),
+                .step("显示语言：新闻页和深度报道用中文还是 English"),
                 .step("关注的城市：加你所在和关心的城市，简报写天气、提醒极端天气"),
                 .step("汇率：加你关心的货币对"),
                 .step("对你的影响：按哪几方面总结（例如学业、投资、家里的生意），说明里写清楚你关心什么"),
