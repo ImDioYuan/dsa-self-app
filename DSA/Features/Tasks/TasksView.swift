@@ -7,7 +7,6 @@ struct TasksView: View {
     @Query(sort: \TaskItem.createdAt, order: .reverse) private var items: [TaskItem]
 
     @State private var sync = TaskSyncService.shared
-    @State private var showSettings = false
     @State private var showAdd = false
     @State private var showDone = false
     @State private var expandedIDs: Set<PersistentIdentifier> = []
@@ -63,7 +62,7 @@ struct TasksView: View {
                         }
 
                         if open.isEmpty {
-                            EmptyTasksCard(onOpenSettings: { showSettings = true })
+                            EmptyTasksCard(onOpenSettings: { AppRouter.shared.tab = .settings })
                         } else {
                             QuadrantMatrixCard(
                                 tasks: matrixTasks, scale: scale, horizonHours: $horizonHours,
@@ -142,15 +141,10 @@ struct TasksView: View {
                     Button { showAdd = true } label: {
                         Label("添加", systemImage: "plus")
                     }
-
-                    Button { showSettings = true } label: {
-                        Label("设置", systemImage: "gearshape")
-                    }
                 }
             }
             .refreshable { await sync.sync(context: context) }
             .task { await sync.syncIfStale(context: context) }
-            .sheet(isPresented: $showSettings) { SettingsView(sync: sync) }
             .sheet(isPresented: $showAdd) { AddTaskSheet() }
         }
     }
@@ -486,7 +480,7 @@ private struct EmptyTasksCard: View {
                 .foregroundStyle(.secondary)
             Text("暂时没有要处理的事")
                 .font(.headline)
-            Text("在设置里打开日历、提醒事项或添加订阅日历链接，DSA 会自动把要做的事整理到这里。")
+            Text("在 设置 → 今日 里打开日历、提醒事项或添加订阅日历，要做的事会整理到这里。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

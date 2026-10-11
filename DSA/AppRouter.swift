@@ -8,7 +8,7 @@ final class AppRouter {
     static let shared = AppRouter()
 
     enum AppTab: Hashable {
-        case tasks, ledger, news
+        case tasks, ledger, news, settings
     }
 
     var tab: AppTab = .tasks

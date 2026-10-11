@@ -129,9 +129,9 @@ enum AITask: String, CaseIterable, Identifiable, Sendable {
 
     var footnote: String {
         switch self {
-        case .tasks: "分析邮件、给商家分类、识别小票和扣费邮件。用量大，适合便宜的小模型；拍小票需要能看图的模型。"
-        case .brief: "每天一次，从几百条标题里挑新闻、写中英双语简报。Claude 会用 Batch API 半价生成。"
-        case .report: "点「生成深度报道」时才调用：读原文、搜索背景，写一篇长文。"
+        case .tasks: "分析邮件、商家分类、识别小票。用量大，适合便宜、能看图的小模型。"
+        case .brief: "每天一次，挑新闻、写双语简报。Claude 用批处理半价。"
+        case .report: "点「生成深度报道」时才用：读原文、搜背景、写长文。"
         }
     }
 }

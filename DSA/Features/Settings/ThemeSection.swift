@@ -3,7 +3,16 @@ import SwiftUI
 import WidgetKit
 #endif
 
-/// 设置里的「外观」：P3 调色盘 + 预设色，app 背景、按钮和桌面小组件一起变
+/// 设置首页的「外观」
+struct AppearanceSettingsView: View {
+    var body: some View {
+        Form { ThemeSection() }
+            .formStyle(.grouped)
+            .navigationTitle("外观")
+    }
+}
+
+/// 外观模式 + 主题颜色（P3 调色盘 + 预设色），app 背景、按钮和桌面小组件一起变
 struct ThemeSection: View {
     @AppStorage(ThemeStore.key, store: ThemeStore.defaults) private var themeRaw = ThemeColor.default.storage
     @AppStorage(ThemeStore.appearanceKey, store: ThemeStore.defaults) private var appearanceRaw = AppearanceMode.system.rawValue
@@ -64,10 +73,6 @@ struct ThemeSection: View {
                 }
                 .padding(.vertical, 4)
             }
-        } header: {
-            Text("外观")
-        } footer: {
-            Text("外观模式默认跟随系统（iPhone 设置里的浅色 / 深色，或定时自动切换），也可以固定成浅色或深色。app 背景、按钮颜色和桌面小组件会一起变。点「主题颜色」右边的色块可以用调色盘（网格 / 光谱 / 滑杆，支持 P3 广色域和吸管）。")
         }
     }
 

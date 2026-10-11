@@ -35,7 +35,7 @@ Each person deploys their own Worker. Your API keys, personal profile ("about me
 
 ### AI providers
 
-Set a key for any provider you want to use, then pick the provider and model for each feature group in the app (Settings → AI 服务).
+Set a key for any provider you want to use, then pick the provider and model for each feature group in the app (Settings → AI 模型).
 
 | | Claude | OpenAI | Gemini | Grok | DeepSeek |
 |---|---|---|---|---|---|
@@ -72,9 +72,9 @@ npx wrangler secret put ANTHROPIC_API_KEY      # and/or OPENAI_API_KEY, GEMINI_A
 npx wrangler deploy
 ```
 
-**3. In the app** (Settings): enter the Worker URL and `APP_TOKEN`, then fill in 个人资料 (profile), 新闻 (number of stories, cities, FX pairs, time) and 我的兴趣 (interests, on the News tab) and AI 服务 (provider and model per feature).
+**3. In the app** (the 设置 tab): enter the Worker URL and `APP_TOKEN` under Worker, then fill in 个人资料 (profile), AI 模型 (provider and model per feature), 今日 (calendars, email watch rules) and 新闻 (interests, number of stories, cities, FX pairs, time).
 
-**4. Optional**: Gmail (create an iOS OAuth client in Google Cloud with your bundle ID, enable the Gmail API, paste the client ID in Settings), subscribed calendars, forwarding a school or work mailbox to a Gmail label.
+**4. Optional**: Gmail (create an iOS OAuth client in Google Cloud with your bundle ID, enable the Gmail API, paste the client ID in 设置 → Gmail), subscribed calendars, forwarding a school or work mailbox to a Gmail label.
 
 ### Tests
 
@@ -110,7 +110,7 @@ xcodebuild test -scheme DSA -destination 'platform=iOS Simulator,name=iPhone 18 
 
 ### AI 服务商
 
-给想用的服务商设置 key，然后在 app 的 设置 → AI 服务 里，给「任务和记账」「每日简报」「深度报道」三组功能分别选服务商和模型。各家能力见上面英文部分的表格：Claude 是实测过的参考实现；其他四家按官方文档写了适配和单元测试，**还没有用真实 API 实测**。`worker/src/ai/registry.ts` 里的模型和价格按 2026 年 10 月，app 里显示的花费是估算。
+给想用的服务商设置 key，然后在 app 的 设置 → AI 模型 里，给「任务和记账」「每日简报」「深度报道」三组功能分别选服务商和模型。各家能力见上面英文部分的表格：Claude 是实测过的参考实现；其他四家按官方文档写了适配和单元测试，**还没有用真实 API 实测**。`worker/src/ai/registry.ts` 里的模型和价格按 2026 年 10 月，app 里显示的花费是估算。
 
 ### 第一次运行
 
@@ -141,10 +141,13 @@ npx wrangler deploy                             # 部署后会显示 https://dsa
 
 **3. App 里的设置**
 
-1. AI 服务：填 Worker 地址和 `APP_TOKEN`，点「测试连接」；在「AI 服务商和模型」里选模型。
-2. 个人资料：称呼、关于我（身份、城市、关心的事）、特别关注的邮件规则。
-3. 新闻：每天几条、关注的城市、汇率、「对你的影响」分哪几方面、自定义 RSS、生成时间。
-4. 我的兴趣（新闻页右上角）：选兴趣。第一天每个兴趣平均分条数，之后 AI 每天根据你点开了哪些新闻、看了多久、有没有 👍👎 自动调整长条，你也可以自己拖。长条下面是这个兴趣「最近爱看」的内容，点一下可以删改。阅读记录只存在你自己的 Worker 里；按爱看的内容搜新闻时，搜索词会发给 Bing 新闻。
+设置在底部的「设置」标签里：
+1. Worker：填地址和 `APP_TOKEN`，点「测试连接」。
+2. AI 模型：给三组功能选服务商和模型。
+3. 个人资料：称呼、关于我（身份、城市、关心的事）。
+4. 今日：苹果日历、提醒事项、订阅日历，以及邮件特别关注的规则。
+5. 新闻：我的兴趣、每天几条和生成时间、关注的城市、汇率、「对你的影响」分哪几方面、自定义 RSS。
+6. 我的兴趣（设置 → 新闻，或新闻页右上角）：选兴趣。第一天每个兴趣平均分条数，之后 AI 每天根据你点开了哪些新闻、看了多久、有没有 👍👎 自动调整长条，你也可以自己拖。长条下面是这个兴趣「最近爱看」的内容，点一下可以删改。阅读记录只存在你自己的 Worker 里；按爱看的内容搜新闻时，搜索词会发给 Bing 新闻。
 
 ### Gmail（可选）
 
@@ -152,13 +155,13 @@ npx wrangler deploy                             # 部署后会显示 https://dsa
 2. APIs & Services → Library → 搜索 **Gmail API** → Enable
 3. Google Auth Platform → Branding：填 app 名字和你的邮箱；Audience 选 **External**，在 Test users 里加上你的 Gmail 地址
 4. Clients → Create client → Application type 选 **iOS** → Bundle ID 填 `你的前缀.dsa`（和 `Config/Local.xcconfig` 一致）→ Create
-5. 复制 Client ID（形如 `123-xxx.apps.googleusercontent.com`），粘贴到 app 的 设置 → 邮箱，点「登录 Gmail」
+5. 复制 Client ID（形如 `123-xxx.apps.googleusercontent.com`），粘贴到 app 的 设置 → Gmail，点「登录 Gmail」
 
 项目保持 Testing 状态即可；测试状态下登录 7 天后失效，到时候在设置里重新登录。
 
 ### 订阅日历（可选）
 
-设置 → 日历 → 添加订阅日历，粘贴 iCal 链接并起个名字（任务上会显示这个名字）：
+设置 → 今日 → 添加订阅日历，粘贴 iCal 链接并起个名字（任务上会显示这个名字）：
 
 - Moodle：Calendar → Import or export calendars → Export calendar，选 All courses 和 Recent and next 60 days → Get calendar URL
 - Canvas：Calendar → Calendar Feed
@@ -167,7 +170,7 @@ npx wrangler deploy                             # 部署后会显示 https://dsa
 
 ### 学校 / 公司邮箱转发到 Gmail（可选）
 
-把邮件转发到 Gmail 的 `+别名`，用过滤器归到一个标签并跳过收件箱，然后在 app 的 设置 → 邮箱 填这个标签名，DSA 会读取它们并标成 Outlook 来源。
+把邮件转发到 Gmail 的 `+别名`，用过滤器归到一个标签并跳过收件箱，然后在 app 的 设置 → Gmail 填这个标签名，DSA 会读取它们并标成 Outlook 来源。
 
 1. **先建 Gmail 过滤器**（顺序不能反，否则转发过来的邮件会先进收件箱）：搜索框右侧的筛选图标 → 「包含字词」填 `deliveredto:你的邮箱名+school@gmail.com` → 创建过滤器 → 勾选「跳过收件箱」「应用标签：School（新建）」「一律不发送到垃圾邮件」
 2. **再开转发**：以 Outlook 为例，设置 → 邮件 → 转发 → 启用转发，填 `你的邮箱名+school@gmail.com`，勾选「保留转发邮件的副本」

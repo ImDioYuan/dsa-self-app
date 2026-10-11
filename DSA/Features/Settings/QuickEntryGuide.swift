@@ -10,8 +10,6 @@ struct QuickEntryGuide: View {
                 step(3, "找到 DSA，选「记一笔」")
             } header: {
                 Label("操作按钮记一笔", systemImage: "button.horizontal.top.press")
-            } footer: {
-                Text("以后按一下机身左侧的操作按钮，就会打开 DSA 并弹出记一笔。")
             }
 
             Section {
@@ -30,7 +28,7 @@ struct QuickEntryGuide: View {
             } header: {
                 Label("Apple Pay 自动记账", systemImage: "wallet.pass")
             } footer: {
-                Text("以后每次用 Apple Pay 刷卡，DSA 会自动记一笔，并按商家自动分类（第一次遇到的商家会问 Claude，之后记住）。在记账页改过分类后，下次同一个商家就用你改的分类。\n只有 Apple Pay 刷卡会触发；网购输卡号、自动扣款不会，这些可以在记账页右上角「导入 CSV」，用银行导出的流水补上。")
+                Text("只有 Apple Pay 刷卡会触发；网购和自动扣款可以在记账页「导入 CSV」补上。")
             }
         }
         .formStyle(.grouped)

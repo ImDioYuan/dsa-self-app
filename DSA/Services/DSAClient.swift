@@ -21,7 +21,7 @@ struct DSAClient: Sendable {
 
         var errorDescription: String? {
             switch self {
-            case .notConfigured: "还没有在设置里填写 Worker 地址和口令"
+            case .notConfigured: "还没有在 设置 → Worker 里填写地址和口令"
             case let .http(code, body): "Worker 返回 \(code)：\(body)"
             }
         }

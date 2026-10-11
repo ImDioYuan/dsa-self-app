@@ -27,13 +27,13 @@ export interface Topic {
 
 export const GROUPS = [
   { id: "current", nameZh: "时事", nameEn: "Current affairs" },
-  { id: "economy", nameZh: "经济", nameEn: "Economy" },
+  { id: "economy", nameZh: "财经", nameEn: "Business & finance" },
   { id: "tech", nameZh: "科技", nameEn: "Tech" },
   { id: "science_health", nameZh: "科学健康", nameEn: "Science & health" },
-  { id: "education", nameZh: "教育", nameEn: "Education" },
-  { id: "culture", nameZh: "文体娱乐", nameEn: "Sports & entertainment" },
+  { id: "education", nameZh: "教育职场", nameEn: "Education & careers" },
+  { id: "sports_games", nameZh: "体育游戏", nameEn: "Sports & games" },
+  { id: "culture", nameZh: "文化娱乐", nameEn: "Culture & entertainment" },
   { id: "life", nameZh: "生活", nameEn: "Life" },
-  { id: "other", nameZh: "其他", nameEn: "Other" },
 ] as const;
 
 const guardian = (name: string, path: string): Feed => ({ name: `Guardian ${name}`, url: `https://www.theguardian.com/${path}/rss` });
@@ -117,8 +117,21 @@ export const TOPICS: Topic[] = [
     ],
     related: ["climate", "society"],
   },
+  {
+    id: "military",
+    nameZh: "军事",
+    nameEn: "Defence",
+    group: "current",
+    hint: "军事、国防和安全",
+    feeds: [
+      { name: "Defense News", url: "https://www.defensenews.com/arc/outboundfeeds/rss/" },
+      { name: "Breaking Defense", url: "https://breakingdefense.com/feed/" },
+      { name: "War on the Rocks", url: "https://warontherocks.com/feed/" },
+    ],
+    related: ["conflict", "space", "aviation"],
+  },
 
-  // MARK: 经济
+  // MARK: 财经
   {
     id: "economy",
     nameZh: "宏观经济",
@@ -191,15 +204,6 @@ export const TOPICS: Topic[] = [
       { name: "NerdWallet", url: "https://www.nerdwallet.com/blog/feed/" },
     ],
     related: ["economy", "real_estate", "careers"],
-  },
-  {
-    id: "careers",
-    nameZh: "就业职场",
-    nameEn: "Work & careers",
-    group: "economy",
-    hint: "求职、职场、薪酬和劳动政策",
-    feeds: [guardian("Work", "money/work-and-careers"), { name: "HR Dive", url: "https://www.hrdive.com/feeds/news/" }],
-    related: ["education", "personal_finance", "startups"],
   },
   {
     id: "shipping",
@@ -320,6 +324,19 @@ export const TOPICS: Topic[] = [
     ],
     related: ["energy", "gadgets", "big_tech"],
   },
+  {
+    id: "aviation",
+    nameZh: "航空",
+    nameEn: "Aviation",
+    group: "tech",
+    hint: "航空公司、飞机和机场",
+    feeds: [
+      { name: "Simple Flying", url: "https://simpleflying.com/feed/" },
+      { name: "AeroTime", url: "https://www.aerotime.aero/feed" },
+      { name: "FlightGlobal", url: "https://www.flightglobal.com/rss" },
+    ],
+    related: ["travel", "space", "military"],
+  },
 
   // MARK: 科学健康
   {
@@ -396,7 +413,7 @@ export const TOPICS: Topic[] = [
     related: ["fitness", "food", "medicine"],
   },
 
-  // MARK: 教育
+  // MARK: 教育职场
   {
     id: "education",
     nameZh: "教育政策",
@@ -431,13 +448,22 @@ export const TOPICS: Topic[] = [
     feeds: [{ name: "Inside Higher Ed", url: "https://www.insidehighered.com/rss.xml" }],
     related: ["education", "science", "study_abroad"],
   },
+  {
+    id: "careers",
+    nameZh: "就业职场",
+    nameEn: "Work & careers",
+    group: "education",
+    hint: "求职、职场、薪酬和劳动政策",
+    feeds: [guardian("Work", "money/work-and-careers"), { name: "HR Dive", url: "https://www.hrdive.com/feeds/news/" }],
+    related: ["education", "personal_finance", "startups"],
+  },
 
-  // MARK: 文体娱乐
+  // MARK: 体育游戏
   {
     id: "sports",
     nameZh: "体育",
     nameEn: "Sports",
-    group: "culture",
+    group: "sports_games",
     hint: "重要的体育赛事和体坛新闻",
     feeds: [
       { name: "BBC Sport", url: "https://feeds.bbci.co.uk/sport/rss.xml" },
@@ -450,7 +476,7 @@ export const TOPICS: Topic[] = [
     id: "gaming",
     nameZh: "电子游戏",
     nameEn: "Gaming",
-    group: "culture",
+    group: "sports_games",
     hint: "游戏新作、主机和游戏行业",
     feeds: [
       { name: "IGN", url: "https://feeds.ign.com/ign/all" },
@@ -464,7 +490,7 @@ export const TOPICS: Topic[] = [
     id: "esports",
     nameZh: "电竞",
     nameEn: "Esports",
-    group: "culture",
+    group: "sports_games",
     hint: "电子竞技赛事和战队",
     feeds: [
       { name: "Dexerto", url: "https://www.dexerto.com/feed/" },
@@ -473,6 +499,8 @@ export const TOPICS: Topic[] = [
     ],
     related: ["gaming", "sports"],
   },
+
+  // MARK: 文化娱乐
   {
     id: "film_tv",
     nameZh: "电影电视",
@@ -545,6 +573,18 @@ export const TOPICS: Topic[] = [
     ],
     related: ["home", "fashion", "books"],
   },
+  {
+    id: "history",
+    nameZh: "历史文化",
+    nameEn: "History & ideas",
+    group: "culture",
+    hint: "历史、考古和人文思想",
+    feeds: [
+      { name: "Smithsonian", url: "https://www.smithsonianmag.com/rss/latest_articles/" },
+      { name: "Aeon", url: "https://aeon.co/feed.rss" },
+    ],
+    related: ["books", "diplomacy"],
+  },
 
   // MARK: 生活
   {
@@ -604,46 +644,6 @@ export const TOPICS: Topic[] = [
     hint: "育儿、家庭和亲子",
     feeds: [guardian("Family", "lifeandstyle/family"), guardian("Parents", "lifeandstyle/parents-and-parenting")],
     related: ["education", "home"],
-  },
-
-  // MARK: 其他
-  {
-    id: "history",
-    nameZh: "历史文化",
-    nameEn: "History & ideas",
-    group: "other",
-    hint: "历史、考古和人文思想",
-    feeds: [
-      { name: "Smithsonian", url: "https://www.smithsonianmag.com/rss/latest_articles/" },
-      { name: "Aeon", url: "https://aeon.co/feed.rss" },
-    ],
-    related: ["books", "diplomacy"],
-  },
-  {
-    id: "military",
-    nameZh: "军事",
-    nameEn: "Defence",
-    group: "other",
-    hint: "军事、国防和安全",
-    feeds: [
-      { name: "Defense News", url: "https://www.defensenews.com/arc/outboundfeeds/rss/" },
-      { name: "Breaking Defense", url: "https://breakingdefense.com/feed/" },
-      { name: "War on the Rocks", url: "https://warontherocks.com/feed/" },
-    ],
-    related: ["conflict", "space", "aviation"],
-  },
-  {
-    id: "aviation",
-    nameZh: "航空",
-    nameEn: "Aviation",
-    group: "other",
-    hint: "航空公司、飞机和机场",
-    feeds: [
-      { name: "Simple Flying", url: "https://simpleflying.com/feed/" },
-      { name: "AeroTime", url: "https://www.aerotime.aero/feed" },
-      { name: "FlightGlobal", url: "https://www.flightglobal.com/rss" },
-    ],
-    related: ["travel", "space", "military"],
   },
 ];
 

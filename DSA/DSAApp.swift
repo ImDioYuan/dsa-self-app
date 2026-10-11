@@ -109,6 +109,9 @@ struct RootView: View {
             Tab("新闻", systemImage: "newspaper", value: AppRouter.AppTab.news) {
                 NewsView()
             }
+            Tab("设置", systemImage: "gearshape", value: AppRouter.AppTab.settings) {
+                SettingsView(sync: TaskSyncService.shared)
+            }
         }
         .tabViewStyle(.sidebarAdaptable)
     }

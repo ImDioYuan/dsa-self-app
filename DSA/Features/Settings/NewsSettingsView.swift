@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 新闻设置：我的兴趣（入口）、每天几条、关注的城市、汇率、「对你的影响」分哪几方面、自定义新闻源、生成时间
+/// 新闻设置：我的兴趣（入口）、简报（每天几条、几点前生成好）、关注的城市、汇率、「对你的影响」分哪几方面、自定义新闻源
 struct NewsSettingsView: View {
     @State private var store = ConfigStore.shared
     @State private var addingPlace = false
@@ -13,12 +13,11 @@ struct NewsSettingsView: View {
     var body: some View {
         ConfigForm(title: "新闻") { $config in
             topicsSection($config)
-            countSection($config)
+            briefSection($config)
             placesSection($config)
             fxSection($config)
             interestsSection($config)
             feedsSection($config)
-            timeSection($config)
         }
         .sheet(isPresented: $addingPlace) {
             PlaceSearchSheet { place in
@@ -53,21 +52,25 @@ struct NewsSettingsView: View {
             } label: {
                 LabeledContent("我的兴趣", value: "\(config.wrappedValue.news.topics.count) 个")
             }
-        } footer: {
-            Text("简报按你的兴趣选新闻。每个兴趣几条由 AI 根据你的阅读情况每天自动调整，也可以自己拖。")
         }
     }
 
-    // MARK: - 条数
+    // MARK: - 简报：条数和时间
 
-    private func countSection(_ config: Binding<UserConfig>) -> some View {
+    private func briefSection(_ config: Binding<UserConfig>) -> some View {
         Section {
             Stepper(value: config.news.count, in: UserConfig.countRange, step: 5) {
                 LabeledContent("每天", value: "\(config.wrappedValue.news.count) 条")
             }
+            DatePicker("几点前生成好", selection: Binding(
+                get: { ConfigFormat.date(from: config.wrappedValue.news.briefTime) },
+                set: { config.wrappedValue.news.briefTime = ConfigFormat.hhmm($0) }
+            ), displayedComponents: .hourAndMinute)
+        } header: {
+            Text("简报")
         } footer: {
             if let usd = config.wrappedValue.estimatedBriefUSD(providers: store.providers, topics: store.topics) {
-                Text("按现在的话题和模型估算，每份简报大约 \(usd.formatted(.currency(code: "USD").precision(.fractionLength(2))))（只作参考，实际花费显示在新闻页底部）。")
+                Text("按设备时区。每份约 \(usd.formatted(.currency(code: "USD").precision(.fractionLength(2))))，实际花费见新闻页底部。")
             }
         }
     }
@@ -96,7 +99,7 @@ struct NewsSettingsView: View {
         } header: {
             Text("关注的城市")
         } footer: {
-            Text("简报里写这些城市今明两天的天气，出现极端天气时会提醒；澳洲的城市还会参考气象局的警告。最多 \(UserConfig.maxPlaces) 个，左滑删除。")
+            Text("简报写这些城市的天气，极端天气会提醒。")
         }
     }
 
@@ -128,8 +131,6 @@ struct NewsSettingsView: View {
             }
         } header: {
             Text("汇率")
-        } footer: {
-            Text("简报顶部显示这些汇率和一周涨跌，「对你的影响」也会参考。不需要就全部删掉。")
         }
     }
 
@@ -169,7 +170,7 @@ struct NewsSettingsView: View {
         } header: {
             Text("对你的影响")
         } footer: {
-            Text("「对你的影响」按这几方面总结，例如 AI 工具、投资、学业、家里的生意。说明写清楚你关心什么，AI 会写出影响的传导链条。")
+            Text("每天按这几方面总结新闻对你的影响。")
         }
     }
 
@@ -205,20 +206,7 @@ struct NewsSettingsView: View {
         } header: {
             Text("自定义新闻源")
         } footer: {
-            Text("可选。填任何网站的 RSS / Atom 链接，例如学校、公司或博客的新闻。")
-        }
-    }
-
-    // MARK: - 时间
-
-    private func timeSection(_ config: Binding<UserConfig>) -> some View {
-        Section {
-            DatePicker("每天几点前生成好", selection: Binding(
-                get: { ConfigFormat.date(from: config.wrappedValue.news.briefTime) },
-                set: { config.wrappedValue.news.briefTime = ConfigFormat.hhmm($0) }
-            ), displayedComponents: .hourAndMinute)
-        } footer: {
-            Text("按设备时区（\(TimeZone.current.identifier)）。用 Claude 时会提前一小时排队半价生成。")
+            Text("可选，任何 RSS 链接。")
         }
     }
 }
@@ -254,7 +242,7 @@ private struct InterestEditor: View {
                 } header: {
                     Text("说明")
                 } footer: {
-                    Text("告诉 AI 这方面你关心什么，例如「我持有美股科技股和澳洲指数基金」或「家里做欧洲啤酒进口，关心海运、汇率和关税」。")
+                    Text("例如「我持有美股科技股」或「家里做进口生意，关心海运、汇率和关税」。")
                 }
             }
             .formStyle(.grouped)

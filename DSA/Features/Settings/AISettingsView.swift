@@ -5,7 +5,7 @@ struct AISettingsView: View {
     @State private var store = ConfigStore.shared
 
     var body: some View {
-        ConfigForm(title: "AI 服务") { $config in
+        ConfigForm(title: "AI 模型") { $config in
             Section {
                 ForEach(store.providers) { provider in
                     LabeledContent {
@@ -26,7 +26,7 @@ struct AISettingsView: View {
             } header: {
                 Text("服务商")
             } footer: {
-                Text("API key 只存在你的 Cloudflare Worker 里，不经过手机。在 worker 目录运行 npx wrangler secret put OPENAI_API_KEY 这类命令添加，然后回到这里刷新。")
+                Text("用 npx wrangler secret put 添加 key，存在你的 Worker 里。添加后下拉刷新。")
             }
 
             ForEach(AITask.allCases) { task in

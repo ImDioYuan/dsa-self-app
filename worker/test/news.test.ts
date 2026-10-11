@@ -86,6 +86,10 @@ describe("catalog", () => {
       expect(topic.feeds.length).toBeGreaterThan(0);
       for (const related of topic.related) expect(ids).toContain(related);
     }
+    // 每个大类都有兴趣，同一个大类的兴趣在目录里挨在一起
+    for (const group of GROUPS) expect(TOPICS.some((t) => t.group === group.id)).toBe(true);
+    const order = TOPICS.map((t) => t.group).filter((g, i, all) => g !== all[i - 1]);
+    expect(order).toEqual(GROUPS.map((g) => g.id));
     const regionIds = REGIONS.map((r) => r.id);
     expect(new Set(regionIds).size).toBe(regionIds.length);
     // 没有自己的源的国家用所在洲的
