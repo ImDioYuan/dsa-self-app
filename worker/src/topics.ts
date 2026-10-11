@@ -856,7 +856,18 @@ export interface FeedPlan {
   regions: string[];
   /** 猜你喜欢的候选兴趣 */
   candidates: string[];
+  /** 按关键词搜新闻（兴趣里最近爱看的小类） */
+  searches?: { interest: string; query: string }[];
   custom: Feed[];
+}
+
+/** 按关键词搜的源最多几个 */
+export const MAX_SEARCHES = 4;
+
+/** Bing 新闻按关键词搜索，最新的在前 */
+export function searchFeed(query: string): Feed {
+  const q = encodeURIComponent(/\s/.test(query) ? `"${query}"` : query);
+  return { name: `Bing 新闻：${query}`, url: `https://www.bing.com/news/search?q=${q}&qft=sortbydate%3d%221%22&format=rss` };
 }
 
 /**
@@ -874,10 +885,11 @@ export function feedsFor(plan: FeedPlan): TaggedFeed[] {
     });
   const regions = plan.regions.map((id) => tagged(regionFeeds(id), `region/${id}`));
   const explore = plan.candidates.map((id) => tagged((TOPICS.find((t) => t.id === id)?.feeds ?? []).slice(0, 2), `explore/${id}`));
+  const searches = (plan.searches ?? []).slice(0, MAX_SEARCHES).map((s) => ({ ...searchFeed(s.query), tag: `topic/${s.interest}` }));
 
   const seen = new Set<string>();
   const feeds: TaggedFeed[] = [];
-  for (const feed of interleave([interleave(topics), interleave(regions), interleave(explore), tagged(plan.custom, "custom")])) {
+  for (const feed of interleave([interleave(topics), searches, interleave(regions), interleave(explore), tagged(plan.custom, "custom")])) {
     if (feeds.length >= MAX_FEEDS) break;
     if (seen.has(feed.url)) continue;
     seen.add(feed.url);

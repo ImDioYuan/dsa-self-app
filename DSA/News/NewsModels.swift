@@ -450,6 +450,19 @@ struct NewsPrefs: Decodable, Sendable, Equatable {
         var previous: Double
         /// 明天大约几条
         var count: Int
+        /// 这个兴趣里最近爱看的小类（旧版 Worker 没有）
+        var liked: [LikedTag]?
+    }
+
+    /// 自动学到的（或者自己加的）小类，比如「电子游戏」里的塞尔达传说
+    struct LikedTag: Decodable, Sendable, Equatable, Identifiable {
+        var key: String
+        var nameZh: String
+        var nameEn: String
+        /// 自己加的
+        var pinned: Bool
+
+        var id: String { key }
     }
 
     struct Region: Decodable, Sendable, Equatable, Identifiable {

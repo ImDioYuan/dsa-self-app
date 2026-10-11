@@ -2,6 +2,7 @@ import SwiftUI
 
 /// 我的兴趣：每个兴趣一条可以拖的长条，长条越长明天这个兴趣的新闻越多。
 /// AI 每天根据阅读情况自动调（常看的慢慢变长，一直不看的每天变短一点，降到 0 就不推）；你拖过之后从拖的位置接着调。
+/// 每个长条下面是这个兴趣「最近爱看」的小类（自动学的，可以删、可以自己加）。
 /// 下面是「猜你喜欢」里发现的兴趣和你常看的地区。兴趣选在配置里（ConfigStore），分数存在 Worker 的 prefs 里
 struct InterestsView: View {
     /// 从新闻页弹出来时显示「完成」
@@ -13,6 +14,7 @@ struct InterestsView: View {
     @State private var levels: [String: Double] = [:]
     @State private var error: String?
     @State private var addingInterests = false
+    @State private var editingLiked: EditingInterest?
     @Environment(\.dismiss) private var dismiss
 
     private var topics: [String] { config.saved?.news.topics ?? [] }
@@ -55,6 +57,9 @@ struct InterestsView: View {
         .sheet(isPresented: $addingInterests, onDismiss: { Task { await saveTopics() } }) {
             InterestCatalogSheet()
         }
+        .sheet(item: $editingLiked) { interest in
+            LikedTagsSheet(interestID: interest.id, name: name(of: interest.id), prefs: $prefs)
+        }
         .task { await load() }
     }
 
@@ -78,7 +83,9 @@ struct InterestsView: View {
                     level: Binding(get: { level(of: id) }, set: { levels[id] = $0 }),
                     previous: prefs?.interests.first { $0.id == id }?.previous,
                     count: counts[id] ?? 0,
-                    onCommit: { Task { await saveLevel(id) } }
+                    liked: prefs?.interests.first { $0.id == id }?.liked,
+                    onCommit: { Task { await saveLevel(id) } },
+                    onEditLiked: { editingLiked = EditingInterest(id: id) }
                 )
             }
             .onDelete { offsets in
@@ -91,7 +98,7 @@ struct InterestsView: View {
         } header: {
             Text("我的兴趣")
         } footer: {
-            Text("长条越长，明天这个兴趣的新闻越多。AI 每天根据你点开了哪些新闻、看了多久、有没有 👍👎 自动调整：常看的慢慢变长，一直不看的每天变短一点，降到 0 就不再推。你也可以自己拖，左滑删除。另外每天有 \(prefs?.exploreCount ?? 2) 条「猜你喜欢」。")
+            Text("长条越长，明天这个兴趣的新闻越多。AI 每天根据你点开了哪些新闻、看了多久、有没有 👍👎 自动调整：常看的慢慢变长，一直不看的每天变短一点，降到 0 就不再推。你也可以自己拖，左滑删除。长条下面是 AI 学到的你在这个兴趣里最近爱看的内容，点一下可以修改。另外每天有 \(prefs?.exploreCount ?? 2) 条「猜你喜欢」。")
         }
     }
 
@@ -195,6 +202,10 @@ struct InterestsView: View {
     }
 }
 
+private struct EditingInterest: Identifiable {
+    let id: String
+}
+
 // MARK: - 一个兴趣的长条
 
 private struct InterestRow: View {
@@ -203,7 +214,10 @@ private struct InterestRow: View {
     @Binding var level: Double
     let previous: Double?
     let count: Int
+    /// nil：旧版 Worker，不显示
+    let liked: [NewsPrefs.LikedTag]?
     let onCommit: () -> Void
+    let onEditLiked: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -223,6 +237,22 @@ private struct InterestRow: View {
                 if !editing { onCommit() }
             }
             .tint(category.tint)
+            if let liked {
+                // borderless：只有这一行能点，不影响拖长条
+                Button(action: onEditLiked) {
+                    HStack(spacing: 4) {
+                        Text(liked.isEmpty ? "最近爱看：还在学习你的口味" : "最近爱看：" + liked.map(\.nameZh).joined(separator: " · "))
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .font(.caption)
+                    // 按钮里 .secondary 会变成浅色的主题色，看不清
+                    .foregroundStyle(Color.secondary)
+                }
+                .buttonStyle(.borderless)
+            }
         }
         .padding(.vertical, 2)
     }
@@ -236,6 +266,113 @@ private struct InterestRow: View {
             } else if change <= -1 {
                 Image(systemName: "arrow.down.right").font(.caption2.weight(.bold)).foregroundStyle(.orange)
             }
+        }
+    }
+}
+
+// MARK: - 一个兴趣的「最近爱看」：删掉不对的，补上漏掉的
+
+private struct LikedTagsSheet: View {
+    let interestID: String
+    let name: String
+    @Binding var prefs: NewsPrefs?
+
+    @State private var newName = ""
+    @State private var isSaving = false
+    @State private var error: String?
+    @Environment(\.dismiss) private var dismiss
+
+    private var liked: [NewsPrefs.LikedTag] {
+        prefs?.interests.first { $0.id == interestID }?.liked ?? []
+    }
+
+    private var trimmed: String { newName.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    if liked.isEmpty {
+                        Text("还没学到。多看几条这类新闻，或者在下面自己加。")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(liked) { tag in
+                        HStack {
+                            Text(tag.nameZh)
+                            if tag.nameEn != tag.nameZh {
+                                Text(tag.nameEn).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if tag.pinned {
+                                Text("你加的").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .contextMenu {
+                            Button("删除", systemImage: "trash", role: .destructive) { Task { await remove(tag.key) } }
+                        }
+                    }
+                    .onDelete { offsets in
+                        let keys = offsets.map { liked[$0].key }
+                        Task { for key in keys { await remove(key) } }
+                    }
+                } header: {
+                    Text("最近爱看")
+                } footer: {
+                    Text("根据你点开了哪些新闻、看了多久、有没有 👍 自动学的。学到以后，同样重要的新闻会多推一条相关的，其余照常保持多样。删掉的 30 天内不会再学；你自己加的会一直保留，直到删掉。")
+                }
+
+                Section("自己加") {
+                    HStack {
+                        TextField("名字", text: $newName, prompt: Text("例如 塞尔达传说"))
+                            .onSubmit { Task { await add() } }
+                        Button("添加") { Task { await add() } }
+                            .buttonStyle(.borderless)
+                            .disabled(trimmed.isEmpty || isSaving)
+                    }
+                }
+
+                if let error {
+                    Section {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle("\(name) · 最近爱看")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+        .macSheetFrame(minWidth: 400, minHeight: 440)
+        .themedTint()
+    }
+
+    private func add() async {
+        let name = trimmed
+        guard !name.isEmpty, !isSaving else { return }
+        if await update(.init(addTag: .init(interest: interestID, name: String(name.prefix(40))))) { newName = "" }
+    }
+
+    private func remove(_ key: String) async {
+        await update(.init(removeTag: key))
+    }
+
+    @discardableResult
+    private func update(_ change: DSAClient.PrefsUpdate) async -> Bool {
+        guard let client = try? DSAClient.fromSettings() else { return false }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            prefs = try await client.updateNewsPrefs(change)
+            error = nil
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            return false
         }
     }
 }

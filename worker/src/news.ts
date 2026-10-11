@@ -13,14 +13,20 @@ import {
   exploreCandidates,
   describePrefs,
   FeedbackEvent,
+  addTag,
+  cleanTags,
+  knownTags,
   levelOf,
+  likedTags,
   PrefsUpdate,
+  removeTag,
   recordFeedback,
   savePrefs,
   topRegions,
+  TagName,
   type Prefs,
 } from "./prefs";
-import { BOM_WARNINGS, feedsFor, GLOBAL, nameOf, REGIONS, TOPICS, type TaggedFeed } from "./topics";
+import { BOM_WARNINGS, feedsFor, GLOBAL, MAX_SEARCHES, nameOf, REGIONS, TOPICS, type TaggedFeed } from "./topics";
 
 /**
  * 每日新闻：每天早上按用户的兴趣抓取 RSS、天气和汇率，让 AI 选出若干条写成中英双语简报；
@@ -61,16 +67,40 @@ export interface BriefPlan {
   allocation: Record<string, number>;
   regions: string[];
   candidates: string[];
+  /** 每个兴趣的分数（写进提示词）。这一项和下面两项旧版排队的批处理没有 */
+  levels?: Record<string, number>;
+  /** 每个兴趣最近爱看的小类，和已有的标签（让 AI 原样复用） */
+  tags?: Record<string, { liked: TagName[]; known: TagName[] }>;
+  /** 按关键词搜新闻：分数高的兴趣里排第一的爱看小类 */
+  searches?: { interest: string; query: string }[];
 }
 
 export function planBrief(config: UserConfig, prefs: Prefs, date: string): BriefPlan {
   const topics = config.news.topics;
   const candidates = exploreCandidates(prefs, topics, date);
   const levels = topics.map((id) => ({ id, level: levelOf(prefs, id) }));
+  const allocation = allocate(levels, config.news.count, candidates.length ? EXPLORE_SLOTS : 0);
+  const active = topics.filter((id) => allocation[id] > 0).sort((a, b) => levelOf(prefs, b) - levelOf(prefs, a));
+  const tags = Object.fromEntries(
+    active.map((id) => [
+      id,
+      { liked: likedTags(prefs, id).map((key) => ({ zh: prefs.tags[key].zh, en: prefs.tags[key].en })), known: knownTags(prefs, id) },
+    ]),
+  );
+  const searches = active
+    .flatMap((id) => {
+      const top = tags[id].liked[0];
+      const query = top?.en.trim() || top?.zh.trim();
+      return query ? [{ interest: id, query }] : [];
+    })
+    .slice(0, MAX_SEARCHES);
   return {
-    allocation: allocate(levels, config.news.count, candidates.length ? EXPLORE_SLOTS : 0),
+    allocation,
     regions: topRegions(prefs),
     candidates,
+    levels: Object.fromEntries(levels.map(({ id, level }) => [id, Math.round(level)])),
+    tags,
+    searches,
   };
 }
 
@@ -88,7 +118,29 @@ const topicLabel = (id: string) => {
   return topic ? `${id}（${topic.nameZh}：${topic.hint}）` : id;
 };
 
-function briefPrompt(config: UserConfig, plan: BriefPlan, categories: string[], warnings: boolean): string {
+const tagLabel = (t: TagName) => (!t.en || t.en === t.zh ? t.zh : `${t.zh}（${t.en}）`);
+
+/** 每个兴趣一行：几条、喜欢程度、最近爱看的小类 */
+function quotaLine(plan: BriefPlan, id: string, n: number): string {
+  const level = plan.levels?.[id];
+  const liked = plan.tags?.[id]?.liked ?? [];
+  let line = `  - ${topicLabel(id)}：${n} 条`;
+  if (level !== undefined) line += `（喜欢程度 ${level}/100）`;
+  if (liked.length) line += `。最近爱看：${liked.map(tagLabel).join("、")}——名额里可以比平时多放一条和这些有关的，其余照常按重要性选，保持类型多样`;
+  return line;
+}
+
+function tagsSection(plan: BriefPlan): string {
+  const known = Object.entries(plan.tags ?? {})
+    .filter(([, t]) => t.known.length)
+    .map(([id, t]) => `  - ${TOPICS.find((topic) => topic.id === id)?.nameZh ?? id}：${t.known.map(tagLabel).join("、")}`);
+  return `## 小类标签（tags）
+- 每条新闻标 1–3 个小类标签，从大到小：先写这个兴趣下的细分方向（例如 电子游戏 → 任天堂、PlayStation、手游；体育 → 足球、NBA；股市投资 → 美股、A 股），再写新闻里的具体对象（某款游戏、某支球队、某家公司、某个人、某个产品）。
+- zh 写中文通用名，en 写英文通用名，会拿来搜索新闻，所以用大家常用的叫法（例如 The Legend of Zelda、Nintendo）；中文没有通用译名就和英文一样。
+- 只写这条新闻真正讲到的，不要写「新闻」「游戏」这种和兴趣本身一样宽的词。天气类新闻 tags 为空数组。${known.length ? `\n- 下面是已有的标签。说的是同一个东西时，原样复用这些写法：\n${known.join("\n")}` : ""}`;
+}
+
+export function briefPrompt(config: UserConfig, plan: BriefPlan, categories: string[], warnings: boolean): string {
   const name = displayName(config);
   const { places, interests, fxPairs, customFeeds } = config.news;
   const total = totalOf(plan);
@@ -97,7 +149,7 @@ function briefPrompt(config: UserConfig, plan: BriefPlan, categories: string[], 
   const quotas = Object.entries(plan.allocation)
     .filter(([, n]) => n > 0)
     .sort((a, b) => b[1] - a[1])
-    .map(([id, n]) => `  - ${topicLabel(id)}：${n} 条`)
+    .map(([id, n]) => quotaLine(plan, id, n))
     .join("\n");
   const countries = REGIONS.filter((r) => r.continent).map((r) => `${r.id}（${r.nameZh}）`).join("、");
   const continents = REGIONS.filter((r) => !r.continent).map((r) => `${r.id}（${r.nameZh}）`).join("、");
@@ -122,7 +174,7 @@ ${aboutUser(config)}
 ## 选新闻
 - ${name}的兴趣和每个兴趣大约几条（根据他平时爱看什么算出来的）：
 ${quotas}
-- 某个兴趣当天的大新闻多可以多一条，没有重要的就少一条，不要为了凑数放进不重要的新闻。上面没有列出的领域不要，除非是影响很大的事。${customFeeds.length ? "\n- 标签为 custom 的是用户自己添加的新闻源，按内容归到上面的兴趣，都不合适就用 other。" : ""}
+- 某个兴趣当天的大新闻多可以多一条，没有重要的就少一条，不要为了凑数放进不重要的新闻。${plan.levels ? "要在兴趣之间增减时，喜欢程度高的优先多给、低的优先少给。" : ""}上面没有列出的领域不要，除非是影响很大的事。${customFeeds.length ? "\n- 标签为 custom 的是用户自己添加的新闻源，按内容归到上面的兴趣，都不合适就用 other。" : ""}
 - 重要性 = 对世界的影响 + 和${name}的关系。同一件事被几家媒体报道时合并成一条，把这些标题的 id 都写进 headlineIds（最多 4 个）。
 - 按重要性从高到低排列，一共大约 ${total} 条（标题实在不够时可以少一些）。
 - importance：5 = 影响全球或直接影响${name}的大事，4 = 很重要，3 = 值得知道，2 或 1 = 一般。
@@ -133,6 +185,8 @@ ${quotas}
 
 ## 猜你喜欢（explore）
 ${explore}
+
+${tagsSection(plan)}
 
 ## 写法
 - 只依据给定的标题和摘要，不要补充摘要里没有的数字、人名和细节；信息少就写得概括一点。
@@ -181,7 +235,7 @@ function categoriesFor(config: UserConfig, plan: BriefPlan): string[] {
   ];
 }
 
-function briefSchema(categories: string[], config: UserConfig, plan: BriefPlan) {
+export function briefSchema(categories: string[], config: UserConfig, plan: BriefPlan) {
   return z.object({
     items: z
       .array(
@@ -189,6 +243,8 @@ function briefSchema(categories: string[], config: UserConfig, plan: BriefPlan) 
           category: z.string().describe(`只能是其中之一：${categories.join("、")}`),
           region: z.string().describe("国家或洲的 id，跨地区填 global"),
           explore: z.boolean().describe("是不是猜你喜欢"),
+          // 部署前排队的批处理没有这一项，当作空的
+          tags: z.array(TagName).describe("1–3 个小类标签，从大到小").catch([]),
           reasonZh: z.string().describe("猜你喜欢的推荐理由，其他新闻为空"),
           reasonEn: z.string(),
           importance: z.number().int().describe("1–5，5 最重要"),
@@ -293,6 +349,8 @@ interface Brief {
     explore?: boolean;
     reasonZh?: string;
     reasonEn?: string;
+    /** 小类标签（具体的游戏、公司、球队……），用来学「最近爱看」 */
+    tags?: TagName[];
     importance: number;
     titleZh: string;
     titleEn: string;
@@ -452,7 +510,7 @@ export async function handleNews(request: Request, url: URL, env: NewsEnv): Prom
   }
 }
 
-/** GET：兴趣分数、明天几条、常看地区、建议加入的兴趣。PUT：拖长条、不想再被推荐某个兴趣 */
+/** GET：兴趣分数、明天几条、最近爱看、常看地区、建议加入的兴趣。PUT：拖长条、不想再被推荐某个兴趣、增删爱看的小类 */
 async function prefsRoute(request: Request, env: NewsEnv, config: UserConfig): Promise<Response> {
   const today = localNow(config.timezone).date;
   const prefs = await ensureScored(env, config, today);
@@ -466,6 +524,9 @@ async function prefsRoute(request: Request, env: NewsEnv, config: UserConfig): P
       prefs.dismissed[parsed.data.dismiss] = today;
       delete prefs.discover[parsed.data.dismiss];
     }
+    const { addTag: added, removeTag: removed } = parsed.data;
+    if (added && config.news.topics.includes(added.interest)) addTag(prefs, added.interest, added.name);
+    if (removed) removeTag(prefs, removed, today);
     await savePrefs(env, prefs);
   } else if (request.method !== "GET") {
     return json({ error: "method not allowed" }, 405);
@@ -741,7 +802,7 @@ async function assembleBrief(
   const items = out.items.slice(0, totalOf(plan) + 2).map((item) => {
     const category = toCategory(item.category, categories);
     const explore = item.explore && plan.candidates.includes(category);
-    return { ...item, category, region: toRegion(item.region), explore };
+    return { ...item, category, region: toRegion(item.region), explore, tags: category === "weather" ? [] : cleanTags(item.tags) };
   });
 
   const brief: Brief = {
@@ -759,6 +820,7 @@ async function assembleBrief(
         category: item.category,
         region: item.region,
         ...(item.explore ? { explore: true, reasonZh: item.reasonZh, reasonEn: item.reasonEn } : {}),
+        ...(item.tags.length ? { tags: item.tags } : {}),
         importance: Math.min(5, Math.max(1, Math.round(item.importance))),
         titleZh: item.titleZh,
         titleEn: item.titleEn,
@@ -1177,12 +1239,23 @@ function openTag(text: string, name: string, from: number): { bodyStart: number 
 
 function linkOf(block: string): string {
   const rss = tag(block, "link");
-  if (rss?.trim()) return clean(rss, 1000);
+  if (rss?.trim()) return unwrapLink(clean(rss, 1000));
   const atom =
     /<link\b[^>]*rel="alternate"[^>]*href="([^"]+)"/.exec(block)?.[1] ?? /<link\b[^>]*href="([^"]+)"/.exec(block)?.[1];
   if (atom) return decodeEntities(atom);
   const guid = tag(block, "guid")?.trim();
   return guid && /^https?:\/\//.test(guid) ? guid : "";
+}
+
+/** Bing 新闻搜索的链接是跳转地址，原文地址在 url 参数里 */
+export function unwrapLink(link: string): string {
+  if (!/^https?:\/\/www\.bing\.com\/news\/apiclick\.aspx\?/i.test(link)) return link;
+  try {
+    const target = new URL(link).searchParams.get("url");
+    return target && /^https?:\/\//i.test(target) ? target : link;
+  } catch {
+    return link;
+  }
 }
 
 /** 去掉 CDATA 和 HTML 标签，解码实体，压缩空白，截断 */

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { UserConfig } from "../src/config";
 import { planBrief, totalOf } from "../src/news";
 import {
+  addTag,
   allocate,
   applyEvent,
   DEFAULT_LEVEL,
@@ -11,12 +12,17 @@ import {
   exploreCandidates,
   MAX_DOWN,
   MAX_UP,
+  likedTags,
   previousDate,
+  removeTag,
   scoreDay,
   suggestions,
+  tagKey,
   topRegions,
   type DayFeedback,
+  type Prefs,
   type ShownItem,
+  type TagName,
 } from "../src/prefs";
 
 /** 一天的简报：每个兴趣 n 条 */
@@ -194,5 +200,136 @@ describe("allocation parity with the app", () => {
   // 和 DSATests/NewsTests.swift 的 allocationMatchesWorker 用同样的输入
   it("matches the Swift version", () => {
     expect(allocate([{ id: "a", level: 100 }, { id: "b", level: 37 }, { id: "c", level: 12 }], 20)).toEqual({ a: 12, b: 5, c: 1 });
+  });
+});
+
+describe("sub-interests (最近爱看)", () => {
+  const zelda: TagName = { zh: "塞尔达传说", en: "The Legend of Zelda" };
+  const nintendo: TagName = { zh: "任天堂", en: "Nintendo" };
+  const sony: TagName = { zh: "索尼", en: "PlayStation" };
+  const mobile: TagName = { zh: "手游", en: "Mobile games" };
+  const ZELDA = tagKey("gaming", "The Legend of Zelda");
+
+  /** 一天的游戏新闻：每组 [标签, 条数, 读了几条]，读了的点开并看满 30 秒（每条 2 分） */
+  function gamingDay(groups: [TagName[], number, number][]): { items: ShownItem[]; feedback: DayFeedback } {
+    const items: ShownItem[] = [];
+    const feedback: DayFeedback = {};
+    for (const [tags, n, readCount] of groups) {
+      for (let i = 0; i < n; i++) {
+        const id = String(items.length + 1);
+        items.push({ id, category: "gaming", region: "global", tags });
+        if (i < readCount) feedback[id] = { open: 1, seconds: 45 };
+      }
+    }
+    return { items, feedback };
+  }
+
+  function score(prefs: Prefs, groups: [TagName[], number, number][], date = "2026-10-12"): Prefs {
+    const { items, feedback } = gamingDay(groups);
+    return scoreDay(prefs, ["gaming"], items, feedback, date);
+  }
+
+  it("learns what you read more of inside an interest", () => {
+    const prefs = score(emptyPrefs(), [
+      [[nintendo, zelda], 2, 2],
+      [[mobile], 2, 0],
+    ]);
+    const liked = likedTags(prefs, "gaming");
+    expect(liked).toContain(ZELDA);
+    expect(liked).toContain(tagKey("gaming", "Nintendo"));
+    expect(liked).not.toContain(tagKey("gaming", "Mobile games"));
+    // 每个兴趣分开：别的兴趣没有
+    expect(likedTags(prefs, "ai")).toEqual([]);
+  });
+
+  it("needs enough reading, and reading it less than the rest of the interest does not count", () => {
+    // 只读了 1 条：得分 2，不够
+    expect(likedTags(score(emptyPrefs(), [[[zelda], 1, 1], [[mobile], 3, 0]]), "gaming")).toEqual([]);
+    // PlayStation 6 条读 2 条（得分率 0.67），Nintendo 2 条都读（2），兴趣平均 1：只有 Nintendo 算
+    const prefs = score(emptyPrefs(), [
+      [[sony], 6, 2],
+      [[nintendo], 2, 2],
+    ]);
+    expect(likedTags(prefs, "gaming")).toEqual([tagKey("gaming", "Nintendo")]);
+  });
+
+  it("does nothing on days without any reading", () => {
+    const prefs = score(emptyPrefs(), [[[zelda], 2, 2]]);
+    const { items } = gamingDay([[[zelda], 3, 0]]);
+    expect(scoreDay(prefs, ["gaming"], items, {}, "2026-10-13")).toBe(prefs);
+  });
+
+  it("fades out when you stop reading it, and forgets tags that stop appearing", () => {
+    let prefs = score(emptyPrefs(), [[[zelda], 2, 2], [[mobile], 2, 0]]);
+    expect(likedTags(prefs, "gaming")).toContain(ZELDA);
+    let date = "2026-10-12";
+    for (let i = 0; i < 12; i++) {
+      date = previousDate(date, -1);
+      prefs = score(prefs, [[[sony], 3, 3]], date);
+    }
+    expect(likedTags(prefs, "gaming")).toEqual([tagKey("gaming", "PlayStation")]);
+    expect(prefs.tags[ZELDA]).toBeUndefined();
+  });
+
+  it("matches a tag you added by its Chinese name and fills in the English one", () => {
+    let prefs = emptyPrefs();
+    addTag(prefs, "gaming", "原神");
+    const key = tagKey("gaming", "原神");
+    expect(likedTags(prefs, "gaming")).toEqual([key]);
+    prefs = score(prefs, [[[{ zh: "原神", en: "Genshin Impact" }], 1, 0], [[mobile], 1, 1]]);
+    expect(prefs.tags[key]).toMatchObject({ zh: "原神", en: "Genshin Impact", pinned: true, shown: 1 });
+    expect(prefs.tags[tagKey("gaming", "Genshin Impact")]).toBeUndefined();
+    // 自己加的一直保留，不会被忘掉
+    let date = "2026-10-12";
+    for (let i = 0; i < 20; i++) {
+      date = previousDate(date, -1);
+      prefs = score(prefs, [[[sony], 2, 1]], date);
+    }
+    expect(likedTags(prefs, "gaming")[0]).toBe(key);
+  });
+
+  it("a removed tag is not learned again for 30 days, unless you add it back", () => {
+    let prefs = score(emptyPrefs(), [[[zelda], 2, 2]]);
+    removeTag(prefs, ZELDA, "2026-10-12");
+    prefs = score(prefs, [[[zelda], 2, 2]], "2026-10-13");
+    expect(prefs.tags[ZELDA]).toBeUndefined();
+    expect(likedTags(prefs, "gaming")).toEqual([]);
+
+    // 31 天后可以重新学
+    prefs = score(prefs, [[[zelda], 2, 2]], "2026-11-13");
+    expect(likedTags(prefs, "gaming")).toEqual([ZELDA]);
+
+    // 删了马上又手动加回来：照常学
+    let again = score(emptyPrefs(), [[[zelda], 2, 2]]);
+    removeTag(again, ZELDA, "2026-10-12");
+    addTag(again, "gaming", "The Legend of Zelda");
+    again = score(again, [[[zelda], 1, 1]], "2026-10-13");
+    expect(again.tags[ZELDA]).toMatchObject({ pinned: true, shown: 1 });
+  });
+
+  it("keeps at most 40 tags per interest", () => {
+    const groups: [TagName[], number, number][] = Array.from({ length: 50 }, (_, i) => [[{ zh: `游戏${i}`, en: `Game ${i}` }], 1, 1]);
+    const prefs = score(emptyPrefs(), groups);
+    expect(Object.keys(prefs.tags)).toHaveLength(40);
+  });
+
+  it("goes into the plan, the prompt and one keyword search per interest", () => {
+    const config = UserConfig.parse({ news: { topics: ["gaming", "ai"], count: 10 } });
+    let prefs = score(emptyPrefs(), [[[nintendo, zelda], 2, 2], [[mobile], 2, 0]]);
+    prefs = { ...prefs, levels: { gaming: 80, ai: 40 } };
+    const plan = planBrief(config, prefs, "2026-10-12");
+    expect(plan.levels).toEqual({ gaming: 80, ai: 40 });
+    expect(plan.tags?.gaming.liked.map((t) => t.en).sort()).toEqual(["Nintendo", "The Legend of Zelda"]);
+    expect(plan.tags?.gaming.known.length).toBe(3);
+    expect(plan.tags?.ai).toEqual({ liked: [], known: [] });
+    expect(plan.searches).toEqual([{ interest: "gaming", query: plan.tags?.gaming.liked[0].en }]);
+
+    const view = describePrefs(prefs, config, "2026-10-12");
+    expect(view.interests.find((i) => i.id === "gaming")?.liked).toContainEqual({
+      key: ZELDA,
+      nameZh: "塞尔达传说",
+      nameEn: "The Legend of Zelda",
+      pinned: false,
+    });
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { UserConfig } from "../src/config";
-import { localNow, parseFeed, repairReport, toArea, toCategory, toCity, toRegion } from "../src/news";
+import { briefPrompt, briefSchema, localNow, parseFeed, repairReport, toArea, toCategory, toCity, toRegion, unwrapLink, type BriefPlan } from "../src/news";
 import { feedsFor, GROUPS, MAX_FEEDS, REGIONS, regionFeeds, TOPICS } from "../src/topics";
 
 describe("config", () => {
@@ -110,6 +110,26 @@ describe("catalog", () => {
     expect(many.some((f) => f.tag === "explore/pets")).toBe(true);
     expect(many.some((f) => f.tag === "custom")).toBe(true);
   });
+
+  it("adds a Bing keyword search per liked sub-interest, still under the cap", () => {
+    const feeds = feedsFor({
+      allocation: { gaming: 3 },
+      regions: [],
+      candidates: [],
+      searches: [{ interest: "gaming", query: "The Legend of Zelda" }],
+      custom: [],
+    });
+    const search = feeds.find((f) => f.url.includes("bing.com"));
+    expect(search?.tag).toBe("topic/gaming");
+    expect(search?.url).toContain("q=%22The%20Legend%20of%20Zelda%22");
+    expect(search?.url).toContain("format=rss");
+
+    const all = Object.fromEntries(TOPICS.map((t) => [t.id, 3]));
+    const searches = ["a", "b", "c", "d", "e", "f"].map((q) => ({ interest: "gaming", query: q }));
+    const many = feedsFor({ allocation: all, regions: ["us"], candidates: ["pets"], searches, custom: [] });
+    expect(many.length).toBe(MAX_FEEDS);
+    expect(many.filter((f) => f.url.includes("bing.com"))).toHaveLength(4);
+  });
 });
 
 describe("normalizers", () => {
@@ -158,6 +178,51 @@ describe("feeds and reports", () => {
     expect(parseFeed(rss)[0]).toMatchObject({ title: "Hello & world", link: "https://a.example/1", summary: "Body" });
     const atom = `<feed><entry><title>Atom</title><link rel="alternate" href="https://b.example/2"/><updated>2026-10-09T10:00:00Z</updated></entry></feed>`;
     expect(parseFeed(atom)[0]).toMatchObject({ title: "Atom", link: "https://b.example/2" });
+  });
+
+  it("unwraps Bing redirect links to the original article", () => {
+    const bing = "http://www.bing.com/news/apiclick.aspx?ref=FexRss&amp;aid=&amp;url=https%3a%2f%2fwww.example.com%2fgaming%2fzelda&amp;c=1&amp;mkt=en-au";
+    const rss = `<rss><channel><item><title>Zelda</title><link>${bing}</link></item></channel></rss>`;
+    expect(parseFeed(rss)[0].link).toBe("https://www.example.com/gaming/zelda");
+    expect(unwrapLink("https://a.example/1")).toBe("https://a.example/1");
+    expect(unwrapLink("http://www.bing.com/news/apiclick.aspx?url=javascript%3aalert(1)")).toBe("http://www.bing.com/news/apiclick.aspx?url=javascript%3aalert(1)");
+  });
+
+  it("asks for sub-interest tags and tolerates their absence", () => {
+    const config = UserConfig.parse({ news: { topics: ["gaming"], count: 10 } });
+    const zelda = { zh: "塞尔达传说", en: "The Legend of Zelda" };
+    const plan: BriefPlan = {
+      allocation: { gaming: 8 },
+      regions: [],
+      candidates: [],
+      levels: { gaming: 72 },
+      tags: { gaming: { liked: [zelda], known: [zelda, { zh: "Nintendo", en: "Nintendo" }] } },
+    };
+    const prompt = briefPrompt(config, plan, ["gaming"], false);
+    expect(prompt).toContain("（喜欢程度 72/100）。最近爱看：塞尔达传说（The Legend of Zelda）——名额里可以比平时多放一条");
+    expect(prompt).toContain("  - 电子游戏：塞尔达传说（The Legend of Zelda）、Nintendo");
+    // 旧版排队的安排：没有分数和小类
+    const old = briefPrompt(config, { allocation: { gaming: 8 }, regions: [], candidates: [] }, ["gaming"], false);
+    expect(old).not.toContain("喜欢程度");
+    expect(old).not.toContain("已有的标签");
+
+    // 部署前排队的批处理输出没有 tags
+    const item = {
+      category: "gaming",
+      region: "global",
+      explore: false,
+      reasonZh: "",
+      reasonEn: "",
+      importance: 3,
+      titleZh: "t",
+      titleEn: "t",
+      summaryZh: "s",
+      summaryEn: "s",
+      headlineIds: ["n1"],
+      affectsMe: false,
+    };
+    const parsed = briefSchema(["gaming"], config, plan).parse({ items: [item], impact: { overviewZh: "", overviewEn: "", points: [] }, weather: [] });
+    expect(parsed.items[0].tags).toEqual([]);
   });
 
   it("repairs leaked impactEn and literal newlines", () => {

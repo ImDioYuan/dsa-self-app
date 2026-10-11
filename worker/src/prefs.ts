@@ -8,6 +8,7 @@ import { COUNTRY_CODES, GLOBAL, nameOf, REGIONS, TOPICS } from "./topics";
  * - 每天生成简报前，用昨天的简报和反馈给每个兴趣打分（0–100），分数决定明天每个兴趣几条：
  *   喜欢的慢慢升，不看的按固定斜率慢慢降到 0；没看新闻的日子不变
  * - 从读过的新闻里统计常看的地区，从「猜你喜欢」里发现新兴趣
+ * - 每个兴趣里学「最近爱看」的小类（AI 给每条新闻标的具体游戏、公司、球队……），用户可以删、可以补
  * 都存在这个 Worker 自己的 KV 里（prefs、feedback:<日期>），不经过别人
  */
 
@@ -32,6 +33,16 @@ export const DISCOVER_THRESHOLD = 3;
 const DISMISS_DAYS = 30;
 /** 常看地区最多几个 */
 export const TOP_REGIONS = 3;
+/** 每个兴趣「最近爱看」最多几个（不算用户自己加的） */
+export const LIKED_PER_INTEREST = 3;
+/** 小类累计得分到这个数才算爱看（例如读完 2 条，或者 1 条 👍） */
+export const LIKED_MIN_ENGAGED = 3;
+/** 每个兴趣给 AI 看几个已有的标签，让它原样复用 */
+export const KNOWN_TAGS = 12;
+/** 每个兴趣最多记几个小类 */
+const TAGS_PER_INTEREST = 40;
+/** 小类的推送次数衰减到这个数以下就忘掉（大约一周多没再出现） */
+const TAG_FORGET = 0.2;
 
 // MARK: - 反馈
 
@@ -92,6 +103,22 @@ export function applyEvent(current: ItemFeedback | undefined, event: Omit<Feedba
 
 // MARK: - 分数
 
+/** 小类的名字（AI 标的或者用户加的） */
+export const TagName = z.object({ zh: z.string(), en: z.string() });
+export type TagName = z.infer<typeof TagName>;
+
+const TagStat = z.object({
+  interest: z.string(),
+  zh: z.string(),
+  en: z.string(),
+  /** 衰减累计的推送条数和喜欢程度，和兴趣的 stats 一样算 */
+  shown: z.number(),
+  engaged: z.number(),
+  /** 用户自己加的：一直算爱看，直到删掉 */
+  pinned: z.boolean().optional(),
+});
+type TagStat = z.infer<typeof TagStat>;
+
 export const Prefs = z.object({
   /** 每个兴趣的分数 0–100；没有的按 DEFAULT_LEVEL */
   levels: z.record(z.string(), z.number()).catch({}),
@@ -105,6 +132,10 @@ export const Prefs = z.object({
   discover: z.record(z.string(), z.number()).catch({}),
   /** 点了「不感兴趣」的兴趣和日期 */
   dismissed: z.record(z.string(), z.string()).catch({}),
+  /** 每个兴趣里的小类（具体的游戏、公司、球队……），键是 tagKey(兴趣, 英文名) */
+  tags: z.record(z.string(), TagStat).catch({}),
+  /** 用户从「最近爱看」里删掉的小类和日期，DISMISS_DAYS 天内不再学 */
+  mutedTags: z.record(z.string(), z.string()).catch({}),
   /** 打分打到哪一天的简报 */
   scoredThrough: z.string().catch(""),
 });
@@ -118,6 +149,8 @@ export function emptyPrefs(seedRegions: string[] = []): Prefs {
     regions: Object.fromEntries(seedRegions.map((id) => [id, 1])),
     discover: {},
     dismissed: {},
+    tags: {},
+    mutedTags: {},
     scoredThrough: "",
   };
 }
@@ -132,6 +165,7 @@ export interface ShownItem {
   category: string;
   region?: string;
   explore?: boolean;
+  tags?: TagName[];
 }
 
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
@@ -140,7 +174,7 @@ const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(mi
  * 用一天的简报和反馈更新分数。这一天一条反馈都没有（没看新闻）就原样返回。
  * 只调整这一天推过、或者分数还没降到 0 但没推的兴趣；降到 0 的不动，等用户拖回来
  */
-export function scoreDay(prefs: Prefs, topics: string[], items: ShownItem[], feedback: DayFeedback): Prefs {
+export function scoreDay(prefs: Prefs, topics: string[], items: ShownItem[], feedback: DayFeedback, date = ""): Prefs {
   if (!Object.keys(feedback).length) return prefs;
   const next: Prefs = structuredClone(prefs);
   next.previous = Object.fromEntries(topics.map((id) => [id, levelOf(prefs, id)]));
@@ -153,6 +187,14 @@ export function scoreDay(prefs: Prefs, topics: string[], items: ShownItem[], fee
   for (const map of [next.regions, next.discover]) {
     for (const id of Object.keys(map)) map[id] *= DECAY;
   }
+  for (const tag of Object.values(next.tags)) {
+    tag.shown *= DECAY;
+    tag.engaged *= DECAY;
+  }
+  for (const [key, at] of Object.entries(next.mutedTags)) {
+    if (date && daysBetween(at, date) >= DISMISS_DAYS) delete next.mutedTags[key];
+  }
+  const index = tagIndex(next);
 
   const shownToday = new Set<string>();
   for (const item of items) {
@@ -166,6 +208,7 @@ export function scoreDay(prefs: Prefs, topics: string[], items: ShownItem[], fee
       stat.shown += 1;
       stat.engaged += score;
       shownToday.add(item.category);
+      learnTags(next, index, item.category, item.tags ?? [], score);
     }
     if (score > 0 && item.region && item.region !== GLOBAL) {
       next.regions[item.region] = (next.regions[item.region] ?? 0) + score;
@@ -191,7 +234,143 @@ export function scoreDay(prefs: Prefs, topics: string[], items: ShownItem[], fee
   for (const map of [next.regions, next.discover]) {
     for (const [id, value] of Object.entries(map)) if (value < 0.05) delete map[id];
   }
+  forgetTags(next);
   return next;
+}
+
+// MARK: - 小类
+
+const CJK = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/;
+const normalize = (name: string) => name.trim().toLowerCase().replace(/\s+/g, " ");
+
+/** 小类的键：兴趣 + 英文名（没有英文名就用中文名），小写 */
+export function tagKey(interest: string, name: string): string {
+  return `${interest}:${normalize(name)}`;
+}
+
+/** 把模型给的标签整理一下：去空、去重、最多 3 个、每个最多 40 字 */
+export function cleanTags(raw: TagName[] | undefined): TagName[] {
+  const seen = new Set<string>();
+  const out: TagName[] = [];
+  for (const t of raw ?? []) {
+    const zh = t.zh.trim().slice(0, 40);
+    const en = t.en.trim().slice(0, 40);
+    const id = normalize(en || zh);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ zh: zh || en, en: en || zh });
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+/** 按兴趣 + 英文名或中文名找已有的小类：手动加的「原神」能对上 AI 写的「原神 / Genshin Impact」 */
+function tagIndex(prefs: Prefs) {
+  const index = new Map<string, string>();
+  const add = (key: string) => {
+    const tag = prefs.tags[key];
+    for (const name of [tag.en, tag.zh]) if (name.trim()) index.set(tagKey(tag.interest, name), key);
+  };
+  for (const key of Object.keys(prefs.tags)) add(key);
+  const find = (interest: string, name: TagName): string | undefined => {
+    for (const n of [name.en, name.zh]) {
+      const key = n.trim() ? index.get(tagKey(interest, n)) : undefined;
+      if (key && prefs.tags[key]) return key;
+    }
+    return undefined;
+  };
+  return { find, add };
+}
+
+function isMuted(prefs: Prefs, interest: string, name: TagName): boolean {
+  return [name.en, name.zh].some((n) => n.trim() && prefs.mutedTags[tagKey(interest, n)] !== undefined);
+}
+
+/** 一条新闻的得分记到它的每个小类上 */
+function learnTags(prefs: Prefs, index: ReturnType<typeof tagIndex>, interest: string, names: TagName[], score: number): void {
+  const done = new Set<string>();
+  for (const name of cleanTags(names)) {
+    let key = index.find(interest, name);
+    // 删掉的不再学；删了又手动加回来的（已经有了）照常学
+    if (!key && isMuted(prefs, interest, name)) continue;
+    if (key) {
+      // 手动加的只有一种写法：补上英文名，或者把英文写的中文名换成中文
+      const tag = prefs.tags[key];
+      if (!tag.en.trim()) tag.en = name.en;
+      if (!CJK.test(tag.zh) && CJK.test(name.zh)) tag.zh = name.zh;
+    } else {
+      key = tagKey(interest, name.en || name.zh);
+      prefs.tags[key] = { interest, zh: name.zh, en: name.en, shown: 0, engaged: 0 };
+    }
+    index.add(key);
+    if (done.has(key)) continue;
+    done.add(key);
+    prefs.tags[key].shown += 1;
+    prefs.tags[key].engaged += score;
+  }
+}
+
+/** 很久没出现的小类忘掉；每个兴趣最多留 TAGS_PER_INTEREST 个（用户加的不删） */
+function forgetTags(prefs: Prefs): void {
+  const byInterest = new Map<string, [string, TagStat][]>();
+  for (const [key, tag] of Object.entries(prefs.tags)) {
+    if (tag.pinned) continue;
+    if (tag.shown < TAG_FORGET) {
+      delete prefs.tags[key];
+      continue;
+    }
+    byInterest.set(tag.interest, [...(byInterest.get(tag.interest) ?? []), [key, tag]]);
+  }
+  for (const entries of byInterest.values()) {
+    entries.sort((a, b) => b[1].shown - a[1].shown);
+    for (const [key] of entries.slice(TAGS_PER_INTEREST)) delete prefs.tags[key];
+  }
+}
+
+/**
+ * 这个兴趣「最近爱看」的小类：用户加的排最前面，再加上学到的前 LIKED_PER_INTEREST 个。
+ * 学到的要累计得分 ≥ LIKED_MIN_ENGAGED，并且看它不比看这个兴趣里别的新闻少（得分率不低于兴趣的平均），
+ * 按累计得分从高到低。不再看了，数据衰减，自然就掉出去
+ */
+export function likedTags(prefs: Prefs, interest: string): string[] {
+  const stat = prefs.stats[interest];
+  const average = stat && stat.shown > 0 ? Math.max(0, stat.engaged / stat.shown) : 0;
+  const entries = Object.entries(prefs.tags).filter(([, t]) => t.interest === interest);
+  const pinned = entries.filter(([, t]) => t.pinned).sort((a, b) => b[1].engaged - a[1].engaged);
+  const learned = entries
+    .filter(([, t]) => !t.pinned && t.engaged >= LIKED_MIN_ENGAGED && t.engaged >= average * t.shown)
+    .sort((a, b) => b[1].engaged - a[1].engaged || a[0].localeCompare(b[0]))
+    .slice(0, LIKED_PER_INTEREST);
+  return [...pinned, ...learned].map(([key]) => key);
+}
+
+/** 这个兴趣已有的标签（给 AI 原样复用）：用户加的和常出现的在前 */
+export function knownTags(prefs: Prefs, interest: string, n = KNOWN_TAGS): TagName[] {
+  return Object.values(prefs.tags)
+    .filter((t) => t.interest === interest)
+    .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || b.shown - a.shown)
+    .slice(0, n)
+    .map(({ zh, en }) => ({ zh, en }));
+}
+
+/** 用户手动加一个爱看的小类；已经有了就标成用户加的 */
+export function addTag(prefs: Prefs, interest: string, rawName: string): void {
+  const name = rawName.trim().replace(/\s+/g, " ").slice(0, 40);
+  if (!name) return;
+  const tagName = CJK.test(name) ? { zh: name, en: "" } : { zh: name, en: name };
+  delete prefs.mutedTags[tagKey(interest, name)];
+  const key = tagIndex(prefs).find(interest, tagName);
+  if (key) prefs.tags[key].pinned = true;
+  else prefs.tags[tagKey(interest, name)] = { interest, ...tagName, shown: 0, engaged: 0, pinned: true };
+}
+
+/** 用户删掉一个小类：清空数据，DISMISS_DAYS 天内不再学 */
+export function removeTag(prefs: Prefs, key: string, today: string): void {
+  const tag = prefs.tags[key];
+  prefs.mutedTags[key] = today;
+  if (!tag) return;
+  for (const n of [tag.en, tag.zh]) if (n.trim()) prefs.mutedTags[tagKey(tag.interest, n)] = today;
+  delete prefs.tags[key];
 }
 
 // MARK: - 条数分配
@@ -239,10 +418,14 @@ function hash(text: string): number {
   return h >>> 0;
 }
 
+function daysBetween(from: string, to: string): number {
+  return (Date.parse(to) - Date.parse(from)) / 86_400_000;
+}
+
 function dismissedRecently(prefs: Prefs, id: string, today: string): boolean {
   const at = prefs.dismissed[id];
   if (!at) return false;
-  return (Date.parse(today) - Date.parse(at)) / 86_400_000 < DISMISS_DAYS;
+  return daysBetween(at, today) < DISMISS_DAYS;
 }
 
 /**
@@ -348,7 +531,7 @@ export async function ensureScored(env: ConfigEnv, config: UserConfig, today: st
       env.NEWS.get<{ items: ShownItem[] }>(`brief:${date}`, "json"),
       env.NEWS.get<DayFeedback>(feedbackKey(date), "json"),
     ]);
-    if (brief) prefs = scoreDay(prefs, config.news.topics, brief.items, feedback ?? {});
+    if (brief) prefs = scoreDay(prefs, config.news.topics, brief.items, feedback ?? {}, date);
   }
   prefs.scoredThrough = yesterday;
   await savePrefs(env, prefs);
@@ -357,7 +540,7 @@ export async function ensureScored(env: ConfigEnv, config: UserConfig, today: st
 
 // MARK: - App 用的视图
 
-/** GET /news/prefs 的返回：每个兴趣的分数、涨跌、明天几条；常看的地区；建议加入的兴趣 */
+/** GET /news/prefs 的返回：每个兴趣的分数、涨跌、明天几条、最近爱看；常看的地区；建议加入的兴趣 */
 export function describePrefs(prefs: Prefs, config: UserConfig, today: string) {
   const levels = config.news.topics.map((id) => ({ id, level: levelOf(prefs, id) }));
   const counts = allocate(levels, config.news.count);
@@ -368,6 +551,10 @@ export function describePrefs(prefs: Prefs, config: UserConfig, today: string) {
       level,
       previous: prefs.previous[id] ?? level,
       count: counts[id] ?? 0,
+      liked: likedTags(prefs, id).map((key) => {
+        const tag = prefs.tags[key];
+        return { key, nameZh: tag.zh || tag.en, nameEn: tag.en || tag.zh, pinned: !!tag.pinned };
+      }),
     })),
     exploreCount: EXPLORE_SLOTS,
     regions: topRegions(prefs, 5).map((id) => ({ id, ...nameOf(id)!, share: Math.round((prefs.regions[id] / regionTotal) * 100) / 100 })),
@@ -380,4 +567,8 @@ export const PrefsUpdate = z.object({
   levels: z.record(z.string(), z.number().min(0).max(100)).optional(),
   /** 不想再被推荐的兴趣 */
   dismiss: z.string().optional(),
+  /** 手动加一个「最近爱看」的小类 */
+  addTag: z.object({ interest: z.string(), name: z.string().min(1).max(40) }).optional(),
+  /** 删掉一个小类（tagKey） */
+  removeTag: z.string().max(100).optional(),
 });

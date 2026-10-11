@@ -102,7 +102,9 @@ struct NewsTests {
 
     @Test func decodesPrefs() throws {
         let json = """
-        {"interests":[{"id":"ai","level":70,"previous":60,"count":9},{"id":"sports","level":5,"previous":15,"count":0}],
+        {"interests":[{"id":"ai","level":70,"previous":60,"count":9,
+           "liked":[{"key":"ai:openai","nameZh":"OpenAI","nameEn":"OpenAI","pinned":false},{"key":"ai:原神","nameZh":"原神","nameEn":"Genshin Impact","pinned":true}]},
+          {"id":"sports","level":5,"previous":15,"count":0,"liked":[]}],
          "exploreCount":2,"regions":[{"id":"china","nameZh":"中国","nameEn":"China","share":0.62}],
          "suggestions":[{"id":"gaming","nameZh":"电子游戏","nameEn":"Gaming"}]}
         """
@@ -110,6 +112,22 @@ struct NewsTests {
         #expect(prefs.interests.map(\.count) == [9, 0])
         #expect(prefs.regions.first?.share == 0.62)
         #expect(prefs.suggestions.map(\.id) == ["gaming"])
+        #expect(prefs.interests[0].liked?.map(\.id) == ["ai:openai", "ai:原神"])
+        #expect(prefs.interests[0].liked?.last?.pinned == true)
+        #expect(prefs.interests[1].liked == [])
+
+        // 旧版 Worker 没有 liked
+        let old = try DSAClient.decoder.decode(NewsPrefs.self, from: Data(#"{"interests":[{"id":"ai","level":70,"previous":60,"count":9}],"exploreCount":2,"regions":[],"suggestions":[]}"#.utf8))
+        #expect(old.interests[0].liked == nil)
+    }
+
+    /// 增删小类只发要改的那一项
+    @Test func encodesTagUpdates() throws {
+        let add = try #require(String(data: DSAClient.encoder.encode(DSAClient.PrefsUpdate(addTag: .init(interest: "gaming", name: "塞尔达传说"))), encoding: .utf8))
+        #expect(add.contains(#""interest":"gaming""#) && add.contains(#""name":"塞尔达传说""#))
+        #expect(!add.contains("levels") && !add.contains("removeTag"))
+        let remove = try #require(String(data: DSAClient.encoder.encode(DSAClient.PrefsUpdate(removeTag: "gaming:nintendo")), encoding: .utf8))
+        #expect(remove == #"{"removeTag":"gaming:nintendo"}"#)
     }
 
     /// 和 worker/test/prefs.test.ts 里的分配结果一致

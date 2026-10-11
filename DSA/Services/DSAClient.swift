@@ -277,10 +277,19 @@ struct DSAClient: Sendable {
     }
 
     struct PrefsUpdate: Encodable, Sendable {
+        struct NewTag: Encodable, Sendable {
+            var interest: String
+            var name: String
+        }
+
         /// 拖过的长条
         var levels: [String: Int]?
         /// 不想再被推荐的兴趣
         var dismiss: String?
+        /// 自己加一个最近爱看的小类
+        var addTag: NewTag?
+        /// 删掉一个小类（LikedTag.key）
+        var removeTag: String?
     }
 
     func updateNewsPrefs(_ update: PrefsUpdate) async throws -> NewsPrefs {
