@@ -14,6 +14,10 @@ A personal, Apple-style app for iPhone, iPad and Mac (one SwiftUI codebase, iOS 
 | **Ledger** | Manual entries in multiple currencies, budgets and charts; receipt scanning; Apple Pay automation via Shortcuts; payment receipts from Gmail; CSV import (Australian banks, Alipay, WeChat Pay); widgets, Control Center buttons and a Camera Control capture extension. |
 | **News** | Every morning an AI picks stories for the interests you choose (about 50, from conflict and AI to music and pets) and writes a bilingual brief, plus "what it means for you", weather for your cities and FX rates. It learns from what you read: each interest has a slider that grows when you read it and shrinks when you don't, regions you read about are preferred, and two "you might like" stories a day suggest new interests. Deep reports are generated only when you tap the button. |
 
+### How it was built
+
+I built DSA in about four days in October 2026 with **Claude Code**. Claude Code wrote the code; I did the product idea, the UI and interaction design, and the testing and bug-hunting on real devices. It is about 20,000 lines of Swift and TypeScript with 135 automated tests (75 for the app, 60 for the Worker), and I use it every day.
+
 ### Platforms
 
 | Platform | Support |
@@ -94,6 +98,10 @@ xcodebuild test -scheme DSA -destination 'platform=iOS Simulator,name=iPhone 18 
 | **今日** | 从苹果日历、提醒事项、订阅日历（Moodle、Canvas、Google 日历、Outlook 等的 iCal 链接）和 Gmail（AI 判断哪些邮件要处理）整理待办；四象限；不同来源的同一件事自动合并。 |
 | **记账** | 多币种手动记账、预算、图表；拍小票识别；快捷指令 + Apple Pay 自动记账；Gmail 付款收据自动记账；导入 CSV（澳洲银行、支付宝、微信）；小组件、控制中心按钮、相机控制键拍小票。 |
 | **新闻** | 每天早上按你选的兴趣（约 50 个，从战争冲突、AI 到音乐、宠物）从 RSS 里挑新闻，写成中英双语简报，再写「对你的影响」、关注城市的天气和汇率。会学习你的喜好：每个兴趣一条长条，常看的变长、不看的慢慢变短；每个兴趣里还会学你「最近爱看」的具体内容（比如电子游戏里的塞尔达、股市里的特斯拉），会多推一条相关的，也会按它搜新闻，学错了可以删、漏了可以自己加；自动统计你常看的地区；每天 2 条「猜你喜欢」帮你发现新兴趣。深度报道点按钮才生成。 |
+
+### 怎么做出来的
+
+2026 年 10 月用 **Claude Code** 花了大约 4 天做出来：代码由 Claude Code 编写，我负责产品构思、界面和交互设计，以及在真机上测试、找 bug。约 2 万行 Swift 和 TypeScript，135 个自动化测试（App 75 个、Worker 60 个），我自己每天都在用。
 
 ### 支持的系统
 
@@ -207,3 +215,9 @@ Shared/              app 和扩展共用的代码
 DSATests/            App 的单元测试
 worker/              Cloudflare Worker：src/ai（各家 AI 的适配）、config.ts（用户配置）、news.ts（新闻）、topics.ts（兴趣、地区和新闻源）、prefs.ts（学习喜好）
 ```
+
+---
+
+## License
+
+[MIT](LICENSE)
