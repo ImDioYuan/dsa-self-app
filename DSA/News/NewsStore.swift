@@ -1,5 +1,8 @@
 import Foundation
 import Observation
+#if os(iOS)
+import UIKit
+#endif
 
 /// 新闻板块的数据：当前显示的简报、往期日期、深度报道。
 /// 简报和报道生成后不会再变，下载过的都存在本地，离线也能看、再打开不用等。
@@ -43,18 +46,19 @@ final class NewsStore {
 
     // MARK: - 简报
 
-    /// 打开新闻页时调用：5 分钟内刷新过就跳过
+    /// 打开新闻页、回到前台时调用：5 分钟内刷新过就跳过。正在看往期的某一天就留在那一天
     func refreshIfStale() {
         if let lastRefresh, Date.now.timeIntervalSince(lastRefresh) < 5 * 60 { return }
-        Task { await refresh() }
+        Task { await refresh(keepingPastBrief: true) }
     }
 
-    /// 拉取日期列表并显示最新的简报。
+    /// 拉取日期列表并显示最新的简报（keepingPastBrief：正在看往期时只更新日期列表，不跳回最新一期）。
     /// 放在独立的 Task 里，切换页面不会把它取消掉；正在刷新时再调用就等这一次结束
-    func refresh() async {
+    func refresh(keepingPastBrief: Bool = false) async {
         if let refreshTask { return await refreshTask.value }
         let task = Task {
-            await load(date: nil)
+            let pastDate = keepingPastBrief && !dates.isEmpty && brief?.date != dates.first ? brief?.date : nil
+            await load(date: pastDate)
             refreshTask = nil
         }
         refreshTask = task
@@ -106,6 +110,9 @@ final class NewsStore {
         isGenerating = true
         defer { isGenerating = false }
         error = nil
+        // 切到别的 app、锁屏时多要一点后台时间，请求不会马上断
+        let background = BackgroundTime(name: "生成今天的简报")
+        defer { background.end() }
         do {
             let fresh = try await client.generateNews()
             NewsCache.save(fresh)
@@ -115,9 +122,36 @@ final class NewsStore {
             if let info = try? await client.newsDates() { monthCostUSD = info.monthCostUSD }
         } catch DSAClient.ClientError.http(409, _) {
             error = "简报正在生成，过一两分钟再下拉刷新"
+        } catch let error where Self.connectionDropped(error) {
+            // 连接断了，Worker 多半还在生成：等它存好再取（不花钱）
+            let ready = await Self.poll { () async -> Bool? in
+                guard let info = try? await client.newsDates() else { return nil }
+                return info.dates.contains(info.today) ? true : nil
+            }
+            if ready == true {
+                await load(date: nil)
+            } else {
+                self.error = "连接断了，简报没有生成完，过几分钟下拉刷新看看"
+            }
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    /// 请求发出去以后连接断了（切出 App、锁屏、网络切换）或者等太久。Worker 那边多半还在生成，不急着报错。
+    /// 没网（notConnectedToInternet）时请求根本没发出去，直接报错
+    private static func connectionDropped(_ error: Error) -> Bool {
+        guard let code = (error as? URLError)?.code else { return false }
+        return code == .networkConnectionLost || code == .timedOut
+    }
+
+    /// 每 10 秒问一次 Worker 存好了没有，最多等 3 分钟
+    private static func poll<T>(_ check: () async -> T?) async -> T? {
+        for _ in 0..<18 {
+            try? await Task.sleep(for: .seconds(10))
+            if let result = await check() { return result }
+        }
+        return nil
     }
 
     // MARK: - 阅读情况（Worker 用它学习你的兴趣）
@@ -185,7 +219,8 @@ final class NewsStore {
         }
     }
 
-    /// 点「生成深度报道」：Claude 读原文、查背景后写报道（30–90 秒，按次计费）。离开详情页也会继续生成完
+    /// 点「生成深度报道」：Claude 读原文、查背景后写报道（30–90 秒，按次计费）。离开详情页也会继续生成完；
+    /// 切出 App 时连接可能会断，Worker 会再跑一会儿把报道存好，这里等它存好再取
     func generateReport(date: String, id: String) {
         let key = Self.reportKey(date: date, id: id)
         guard reports[key] == nil, !loadingReports.contains(key) else { return }
@@ -197,18 +232,55 @@ final class NewsStore {
         reportErrors[key] = nil
         Task {
             defer { loadingReports.remove(key) }
+            // 点开原文、切到别的 app、锁屏时多要一点后台时间，请求不会马上断
+            let background = BackgroundTime(name: "生成深度报道")
+            defer { background.end() }
+            let report: NewsReport
             do {
-                let report = try await client.generateNewsReport(date: date, id: id)
-                NewsCache.save(report, date: date, id: id)
-                reports[key] = report
-                // 底部的「本月新闻花费」跟着更新
-                if let info = try? await client.newsDates() { monthCostUSD = info.monthCostUSD }
+                report = try await client.generateNewsReport(date: date, id: id)
             } catch DSAClient.ClientError.http(409, _) {
                 reportErrors[key] = "这篇报道正在生成，稍后再打开看看"
+                return
+            } catch let error where Self.connectionDropped(error) {
+                // 连接断了，Worker 多半还在写：等它存好再取（不花钱）
+                guard let saved = await Self.poll({ try? await client.cachedNewsReport(date: date, id: id) }) else {
+                    reportErrors[key] = "连接断了，报道没有生成完，几分钟后可以重试"
+                    return
+                }
+                report = saved
             } catch {
                 reportErrors[key] = error.localizedDescription
+                return
             }
+            NewsCache.save(report, date: date, id: id)
+            reports[key] = report
+            // 底部的「本月新闻花费」跟着更新
+            if let info = try? await client.newsDates() { monthCostUSD = info.monthCostUSD }
         }
+    }
+}
+
+/// 切到别的 app、锁屏时向系统多要一点后台时间（一般 30 秒左右），正在等的请求不会马上断。Mac 上不需要
+@MainActor
+private final class BackgroundTime {
+    #if os(iOS)
+    private var id = UIBackgroundTaskIdentifier.invalid
+    #endif
+
+    init(name: String) {
+        #if os(iOS)
+        id = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+            MainActor.assumeIsolated { self?.end() }
+        }
+        #endif
+    }
+
+    func end() {
+        #if os(iOS)
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
+        #endif
     }
 }
 

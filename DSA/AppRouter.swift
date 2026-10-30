@@ -18,6 +18,8 @@ final class AppRouter {
     var pendingReceipt: Data?
     /// 设置页推入「用前配置」（从「今日」的提醒卡片过来）
     var showSetupGuide = false
+    /// 设置页推入 Gmail（从「今日」的「Gmail 需要重新登录」卡片过来）
+    var showGmailSettings = false
 
     private init() {}
 
@@ -31,6 +33,12 @@ final class AppRouter {
     func openSetupGuide() {
         tab = .settings
         showSetupGuide = true
+    }
+
+    /// 切到设置并打开 Gmail（重新登录）
+    func openGmailSettings() {
+        tab = .settings
+        showGmailSettings = true
     }
 
     /// 切到记账页并识别这张小票

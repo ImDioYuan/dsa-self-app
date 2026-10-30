@@ -29,7 +29,8 @@ struct CalendarSource: TaskSourceProvider {
                     kind: .meeting,
                     // 日历里大多是上课、例会这类日常安排；考试、面试按标题升级
                     importance: Importance.guess(title: event.title ?? "", default: .normal),
-                    due: event.startDate,
+                    // 全天事件的开始时间是 0:00，当成截止时间会一早就显示「已过期」
+                    due: event.isAllDay ? event.startDate.lastMinuteOfDay() : event.startDate,
                     link: event.url?.absoluteString
                 )
             }
@@ -55,7 +56,9 @@ struct RemindersSource: TaskSourceProvider {
         return await withCheckedContinuation { continuation in
             store.fetchReminders(matching: predicate) { reminders in
                 let drafts = (reminders ?? []).map { reminder in
-                    let due = reminder.dueDateComponents?.date
+                    // 只设了日期、没设时间的提醒（全天提醒）算当天 23:59 截止，不是 0:00
+                    let components = reminder.dueDateComponents
+                    let due = components?.date.map { components?.hour == nil ? $0.lastMinuteOfDay() : $0 }
                     return TaskDraft(
                         sourceID: "reminders:\(reminder.calendarItemIdentifier)",
                         title: reminder.title ?? "（无标题）",

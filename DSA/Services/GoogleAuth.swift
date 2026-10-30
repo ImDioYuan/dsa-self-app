@@ -53,7 +53,24 @@ enum GoogleAuth {
 
     static var isSignedIn: Bool { tokens != nil }
 
-    static func signOut() { tokens = nil }
+    /// 自己退出（不用再提醒重新登录）
+    static func signOut() {
+        tokens = nil
+        isExpired = false
+    }
+
+    /// 登录过期了：测试模式下刷新令牌 7 天就失效。只靠同步时的错误提示很容易错过，
+    /// 而过期后邮件里的待办和邮件自动记账都会悄悄停掉，所以记下来，今日页一直提醒到重新登录
+    static var isExpired: Bool {
+        get { UserDefaults.standard.double(forKey: SettingsKey.gmailExpiredAt) > 0 }
+        set {
+            if newValue {
+                UserDefaults.standard.set(Date.now.timeIntervalSince1970, forKey: SettingsKey.gmailExpiredAt)
+            } else {
+                UserDefaults.standard.removeObject(forKey: SettingsKey.gmailExpiredAt)
+            }
+        }
+    }
 
     /// "123-abc.apps.googleusercontent.com" → "com.googleusercontent.apps.123-abc"
     static func callbackScheme(for clientID: String) -> String {
@@ -118,6 +135,7 @@ enum GoogleAuth {
         )
         newTokens.email = try? await GmailAPI(accessToken: newTokens.accessToken).profileEmail()
         tokens = newTokens
+        isExpired = false
     }
 
     // MARK: - 访问令牌
@@ -139,8 +157,11 @@ enum GoogleAuth {
             tokens = current
             return current.accessToken
         } catch AuthError.server(let message) where message.contains("invalid_grant") {
-            // 测试模式下刷新令牌 7 天过期，或者用户撤销了授权
-            signOut()
+            // 测试模式下刷新令牌 7 天过期，或者用户撤销了授权。今日页的 @AppStorage 在看这个值，放到主线程改
+            await MainActor.run {
+                signOut()
+                isExpired = true
+            }
             throw AuthError.noRefreshToken
         }
     }

@@ -3,6 +3,7 @@ import { createClient, PROVIDERS, resolveChoice, supportsVision, type AIClient }
 import { displayName, handleConfig, loadConfig, type UserConfig } from "./config";
 import { aiErrorResponse, json } from "./http";
 import { handleNews, runScheduledNews, type NewsEnv } from "./news";
+import { canonicalDue, localTime, localWeekday } from "./time";
 
 export interface Env extends NewsEnv {
   /** app 和 Worker 共享的访问口令 */
@@ -64,8 +65,8 @@ ${about ? `\n## 关于${name}\n${about}\n` : ""}
 - 2 一般：做了更好、不做影响不大，例如讲座、可选活动、一般性的确认
 - 1 不重要：几乎没有影响，例如群发通知里顺带提到的事
 
-due 用用户所在时区的 ISO 8601 格式并带偏移，例如 2026-10-05T17:00:00+11:00。
-"周五下午五点"这类相对时间根据当前时间推算；只有日期没有时间时用当天 23:59；完全没有提到时间则为 null。
+due 用用户所在时区的 ISO 8601 格式并带偏移，例如 2026-10-05T17:00:00+11:00，不要写星期。
+「明天」「周五下午五点」这类相对时间按这封消息的收信时间推算（receivedAt，receivedWeekday 是那天星期几），不是按当前时间；只有日期没有时间时用当天 23:59；完全没有提到时间则为 null。
 title 里的课程代码和作业、测验名称保留原文，例如「提交 COMP3311 Assignment 2」，app 要靠它和订阅日历里的同一项对上；时间只写在 due 里，不要写进 title。
 sourceId 必须原样照抄消息的 id。宁可漏掉无关紧要的消息，也不要把广告当成任务。
 ${
@@ -78,7 +79,7 @@ ${
 // MARK: - 入口
 
 export default {
-  async fetch(request, env): Promise<Response> {
+  async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
 
     if (!(await isAuthorized(request, env))) {
@@ -103,7 +104,7 @@ export default {
       return charges(request, env);
     }
     if (url.pathname.startsWith("/news/")) {
-      return handleNews(request, url, env);
+      return handleNews(request, url, env, ctx);
     }
     return json({ error: "not found" }, 404);
   },
@@ -135,7 +136,9 @@ async function analyze(request: Request, env: Env): Promise<Response> {
     id: m.id,
     from: m.from,
     subject: m.subject,
-    receivedAt: m.receivedAt,
+    // 用户时区的本地时间（App 传来的是 UTC，日期常常比悉尼早一天）
+    receivedAt: localTime(m.receivedAt, input.timezone),
+    receivedWeekday: localWeekday(m.receivedAt, input.timezone),
     body: m.body.slice(0, MAX_BODY_CHARS),
   }));
 
@@ -144,14 +147,14 @@ async function analyze(request: Request, env: Env): Promise<Response> {
     const result = await ai.structured({
       system: analyzePrompt(config),
       content:
-        `当前时间：${input.now}（时区 ${input.timezone}）\n` +
+        `当前时间：${localTime(input.now, input.timezone)}（${localWeekday(input.now, input.timezone)}，时区 ${input.timezone}）\n` +
         `以下是 ${messagesForModel.length} 条消息：\n` +
         `<messages>\n${JSON.stringify(messagesForModel, null, 1)}\n</messages>`,
       schema: ExtractionResult,
       name: "tasks",
       maxTokens: 8000,
     });
-    return json({ tasks: normalize(result.data.tasks, input.messages), usage: result.usage });
+    return json({ tasks: normalize(result.data.tasks, input.messages, input.timezone), usage: result.usage });
   } catch (err) {
     return aiErrorResponse(err);
   }
@@ -282,6 +285,7 @@ async function categorize(request: Request, env: Env): Promise<Response> {
 function normalize(
   tasks: z.infer<typeof ExtractedTask>[],
   messages: z.infer<typeof InboxMessage>[],
+  timezone: string,
 ) {
   const ids = new Set(messages.map((m) => m.id));
   const counter = new Map<string, number>();
@@ -295,7 +299,7 @@ function normalize(
         ...t,
         sourceId: `${t.sourceId}#${n}`,
         importance: Math.min(4, Math.max(1, Math.round(t.importance))),
-        due: t.due && !Number.isNaN(Date.parse(t.due)) ? t.due : null,
+        due: canonicalDue(t.due, timezone),
       };
     });
 }
@@ -350,7 +354,8 @@ async function charges(request: Request, env: Env): Promise<Response> {
     id: m.id,
     from: m.from,
     subject: m.subject,
-    receivedAt: m.receivedAt,
+    // 邮件里没写日期时按收件日期记账，要用用户时区的日期
+    receivedAt: localTime(m.receivedAt, input.timezone),
     body: m.body.slice(0, MAX_BODY_CHARS),
   }));
 

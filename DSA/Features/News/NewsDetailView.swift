@@ -143,7 +143,7 @@ struct NewsDetailView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(lang.pick("正在阅读原文、查找背景…", "Reading the sources and digging into the background…"))
                         .font(.subheadline.weight(.semibold))
-                    Text(lang.pick("大约需要 30–90 秒，离开这个页面也会继续生成", "Takes 30–90 seconds and keeps going if you leave"))
+                    Text(lang.pick("大约需要 30–90 秒。可以离开这个页面，但最好先别切出 DSA", "Takes 30–90 seconds. You can leave this page, but try to stay in DSA"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

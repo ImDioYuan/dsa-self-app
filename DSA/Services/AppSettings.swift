@@ -16,6 +16,8 @@ enum SettingsKey {
     static let useReminders = "useReminders"
     static let lastSyncAt = "lastSyncAt"
     static let googleClientID = "googleClientID"
+    /// Gmail 登录过期的时间（timeIntervalSince1970，0 = 没过期）。今日页一直提醒到重新登录
+    static let gmailExpiredAt = "gmailExpiredAt"
     /// 离截止不到多少小时算「紧急」（四象限的横轴分界）
     static let urgentHorizonHours = "urgentHorizonHours"
 }

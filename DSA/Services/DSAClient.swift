@@ -302,8 +302,9 @@ struct DSAClient: Sendable {
         try await get("config", timeout: 30)
     }
 
-    func saveConfig(_ config: UserConfig) async throws -> ConfigResponse {
-        try await send("PUT", "config", body: config, timeout: 30)
+    /// base：这台读到的版本（updatedAt）。Worker 上已经有更新的版本时返回 409，不会把别的设备的改动冲掉
+    func saveConfig(_ config: UserConfig, base: String? = nil) async throws -> ConfigResponse {
+        try await send("PUT", "config", body: config, headers: base.map { ["If-Match": $0] } ?? [:], timeout: 30)
     }
 
     // MARK: - 工具
@@ -324,11 +325,14 @@ struct DSAClient: Sendable {
         try await send("POST", path, body: body, timeout: timeout)
     }
 
-    private func send<Body: Encodable, Response: Decodable>(_ method: String, _ path: String, body: Body, timeout: TimeInterval) async throws -> Response {
+    private func send<Body: Encodable, Response: Decodable>(
+        _ method: String, _ path: String, body: Body, headers: [String: String] = [:], timeout: TimeInterval
+    ) async throws -> Response {
         var request = URLRequest(url: baseURL.appending(path: path))
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         request.timeoutInterval = timeout
         request.httpBody = try Self.encoder.encode(body)
 

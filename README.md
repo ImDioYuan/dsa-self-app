@@ -16,7 +16,7 @@ A personal, Apple-style app for iPhone, iPad and Mac (one SwiftUI codebase, iOS 
 
 ### How it was built
 
-I built DSA in about four days in October 2026 with **Claude Code**. Claude Code wrote the code; I did the product idea, the UI and interaction design, and the testing and bug-hunting on real devices. It is about 20,000 lines of Swift and TypeScript with 135 automated tests (75 for the app, 60 for the Worker), and I use it every day.
+I built DSA in about four days in October 2026 with **Claude Code**. Claude Code wrote the code; I did the product idea, the UI and interaction design, and the testing and bug-hunting on real devices. It is about 20,000 lines of Swift and TypeScript with 145 automated tests (82 for the app, 63 for the Worker), and I use it every day.
 
 ### Platforms
 
@@ -101,7 +101,7 @@ xcodebuild test -scheme DSA -destination 'platform=iOS Simulator,name=iPhone 18 
 
 ### 怎么做出来的
 
-2026 年 10 月用 **Claude Code** 花了大约 4 天做出来：代码由 Claude Code 编写，我负责产品构思、界面和交互设计，以及在真机上测试、找 bug。约 2 万行 Swift 和 TypeScript，135 个自动化测试（App 75 个、Worker 60 个），我自己每天都在用。
+2026 年 10 月用 **Claude Code** 花了大约 4 天做出来：代码由 Claude Code 编写，我负责产品构思、界面和交互设计，以及在真机上测试、找 bug。约 2 万行 Swift 和 TypeScript，145 个自动化测试（App 82 个、Worker 63 个），我自己每天都在用。
 
 ### 支持的系统
 

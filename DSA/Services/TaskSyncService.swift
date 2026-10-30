@@ -100,6 +100,8 @@ final class TaskSyncService {
     /// 关掉的数据源不会再同步，不删的话它的任务会一直留在今日里
     static func removeTasks(from sources: Set<TaskSource>, in context: ModelContext) {
         guard !sources.isEmpty else { return }
+        // 关掉再打开就是重新开始：以前在今日里删掉的也重新显示
+        for source in sources { DeletedTasks(source: source).removeAll() }
         let raws = sources.map(\.rawValue)
         let descriptor = FetchDescriptor<TaskItem>(predicate: #Predicate { raws.contains($0.sourceRaw) })
         for item in (try? context.fetch(descriptor)) ?? [] { context.delete(item) }
@@ -126,9 +128,15 @@ final class TaskSyncService {
         }
         let all = Array(byID.values)
         var seen = Set<String>()
+        // 在今日里删掉的，数据源还会再给，跳过
+        let deleted = Set(drafts.map(\.source)).reduce(into: Set<String>()) { $0.formUnion(DeletedTasks(source: $1).entries) }
+        var seenEntries = Set<String>()
 
         for draft in drafts {
             seen.insert(draft.sourceID)
+            let entry = DeletedTasks.entry(sourceID: draft.sourceID, title: draft.title, due: draft.due)
+            seenEntries.insert(entry)
+            if deleted.contains(entry) { continue }
             if let item = byID[draft.sourceID] {
                 item.apply(draft)
             } else {
@@ -142,7 +150,56 @@ final class TaskSyncService {
             for item in all where item.sourceRaw == source.rawValue && !item.isDone && !seen.contains(item.sourceID) {
                 context.delete(item)
             }
+            DeletedTasks(source: source).keep(only: seenEntries)
         }
+    }
+
+    /// 在今日里删掉。日历、提醒事项、订阅日历下次同步还会把还在的事项带回来，重新分析邮件也会，所以先记下来
+    static func delete(_ items: [TaskItem], in context: ModelContext) {
+        for item in items {
+            if item.source != .manual && item.source != .shared {
+                DeletedTasks(source: item.source).insert(DeletedTasks.entry(sourceID: item.sourceID, title: item.title, due: item.due))
+            }
+            context.delete(item)
+        }
+    }
+}
+
+/// 在今日里删掉的任务，按数据源记下来，同步时跳过。记的是 sourceID 加标题和时间：
+/// 重复的提醒事项每次都是同一个 sourceID，这样只跳过删掉的那一次；邮件重新分析后几件事的顺序变了也对得上。
+/// 全量数据源不再返回的（过期了、源头删了）就忘掉；关掉数据源、或者在设置里点「恢复」时清空
+struct DeletedTasks: Sendable {
+    let source: TaskSource
+    var limit = 500
+
+    var key: String { "deletedTasks.\(source.rawValue)" }
+
+    static func entry(sourceID: String, title: String, due: Date?) -> String {
+        "\(sourceID)|\(TaskItem.dedupeKey(title: title, due: due))"
+    }
+
+    var entries: Set<String> { Set(UserDefaults.standard.stringArray(forKey: key) ?? []) }
+
+    func insert(_ entry: String) {
+        var all = UserDefaults.standard.stringArray(forKey: key) ?? []
+        guard !all.contains(entry) else { return }
+        all.append(entry)
+        UserDefaults.standard.set(Array(all.suffix(limit)), forKey: key)
+    }
+
+    func keep(only entries: Set<String>) {
+        let all = UserDefaults.standard.stringArray(forKey: key) ?? []
+        let kept = all.filter(entries.contains)
+        if kept.count != all.count { UserDefaults.standard.set(kept, forKey: key) }
+    }
+
+    func removeAll() { UserDefaults.standard.removeObject(forKey: key) }
+
+    /// 一共删掉了几条（设置里的「恢复」按钮用）
+    static var count: Int { TaskSource.allCases.reduce(0) { $0 + DeletedTasks(source: $1).entries.count } }
+
+    static func restoreAll() {
+        for source in TaskSource.allCases { DeletedTasks(source: source).removeAll() }
     }
 }
 

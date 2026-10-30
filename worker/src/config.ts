@@ -131,6 +131,14 @@ export async function handleConfig(request: Request, env: ConfigEnv): Promise<Re
   if (request.method === "PUT") {
     const body = await request.json().catch(() => null);
     if (!body || typeof body !== "object") return json({ error: "bad request" }, 400);
+    // 整份覆盖保存：这台设备读到配置以后，别的设备（iPhone / iPad / Mac）又存过的话，直接存会把那边的改动冲掉。
+    // 新版 App 在 If-Match 里带上它读到的版本（updatedAt）；Worker 上的更新就返回 409，让 App 读最新的、合并上自己改的再存。
+    // 只在存着的版本比它新时才拒绝：KV 刚写完可能还读到旧的，旧的不算冲突。旧版 App 不带 If-Match，照旧直接存
+    const base = request.headers.get("If-Match");
+    if (base) {
+      const stored = await loadConfig(env);
+      if (stored.updatedAt > base) return json({ error: "conflict" }, 409);
+    }
     const config = UserConfig.parse({ ...body, updatedAt: new Date().toISOString() });
     await env.NEWS.put(CONFIG_KEY, JSON.stringify(config));
     return json(await describe(env, config));

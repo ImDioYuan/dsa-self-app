@@ -88,6 +88,7 @@ struct DSAApp: App {
 struct RootView: View {
     @State private var router = AppRouter.shared
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.modelContext) private var context
 
     var body: some View {
         tabs
@@ -98,8 +99,23 @@ struct RootView: View {
             // 邮件自动记账：每天 8 点后第一次打开 / 回到前台时检查（当天已检查过就跳过）
             .task { await EmailChargeScanner.shared.runIfDue() }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active { Task { await EmailChargeScanner.shared.runIfDue() } }
+                if phase == .active { Task { await refreshIfStale() } }
             }
+            // Mac 上 app 常常一直开着，不会「回到前台」，所以每 15 分钟再检查一次
+            .task {
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .seconds(15 * 60)) } catch { break }
+                    await refreshIfStale()
+                }
+            }
+    }
+
+    /// 回到前台时：新闻超过 5 分钟、今日超过 10 分钟没刷新就刷新一下（页面只在第一次出现时自己刷新），
+    /// 再看邮件自动记账今天做了没有
+    private func refreshIfStale() async {
+        NewsStore.shared.refreshIfStale()
+        await TaskSyncService.shared.syncIfStale(context: context)
+        await EmailChargeScanner.shared.runIfDue()
     }
 
     private var tabs: some View {

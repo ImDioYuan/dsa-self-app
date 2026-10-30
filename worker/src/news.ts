@@ -470,7 +470,7 @@ class NewsError extends Error {
 
 // MARK: - 入口
 
-export async function handleNews(request: Request, url: URL, env: NewsEnv): Promise<Response> {
+export async function handleNews(request: Request, url: URL, env: NewsEnv, ctx: ExecutionContext): Promise<Response> {
   try {
     const config = await loadConfig(env);
     if (url.pathname === "/news/dates" && request.method === "GET") {
@@ -488,10 +488,10 @@ export async function handleNews(request: Request, url: URL, env: NewsEnv): Prom
       return new Response(`{"brief":${brief}}`, { headers: { "Content-Type": "application/json; charset=utf-8" } });
     }
     if (url.pathname === "/news/generate" && request.method === "POST") {
-      return await generate(request, env, config);
+      return await generate(request, env, config, ctx);
     }
     if (url.pathname === "/news/report" && request.method === "POST") {
-      return await report(request, env, config);
+      return await report(request, env, config, ctx);
     }
     if (url.pathname === "/news/feedback" && request.method === "POST") {
       const parsed = FeedbackEvent.safeParse(await request.json().catch(() => null));
@@ -672,7 +672,7 @@ const GenerateRequest = z.object({
   dryRun: z.boolean().default(false),
 });
 
-async function generate(request: Request, env: NewsEnv, config: UserConfig): Promise<Response> {
+async function generate(request: Request, env: NewsEnv, config: UserConfig, ctx: ExecutionContext): Promise<Response> {
   const parsed = GenerateRequest.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) return json({ error: "bad request", issues: parsed.error.issues }, 400);
   const { force, dryRun } = parsed.data;
@@ -706,8 +706,10 @@ async function generate(request: Request, env: NewsEnv, config: UserConfig): Pro
     }
     await dropPending(env, now.date, pending);
   }
-  const brief = await generateWithLock(env, config, now.date, now.weekday);
-  return json({ brief });
+  const work = generateWithLock(env, config, now.date, now.weekday);
+  // 用户切出 App、锁屏时连接会断。交给 waitUntil，断开后还能再跑一会儿（最多 30 秒）把简报存好，App 回来再取
+  ctx.waitUntil(work.catch(() => {}));
+  return json({ brief: await work });
 }
 
 async function generateWithLock(env: NewsEnv, config: UserConfig, date: string, weekday: string): Promise<Brief> {
@@ -954,7 +956,7 @@ const ReportRequest = z.object({
   generate: z.boolean().default(true),
 });
 
-async function report(request: Request, env: NewsEnv, config: UserConfig): Promise<Response> {
+async function report(request: Request, env: NewsEnv, config: UserConfig, ctx: ExecutionContext): Promise<Response> {
   const parsed = ReportRequest.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return json({ error: "bad request", issues: parsed.error.issues }, 400);
   const { date, id, generate } = parsed.data;
@@ -973,25 +975,30 @@ async function report(request: Request, env: NewsEnv, config: UserConfig): Promi
   if ((await env.NEWS.get(lockKey)) !== null) throw new NewsError("这篇报道正在生成，请稍后再试", 409);
   await env.NEWS.put(lockKey, "1", { expirationTtl: 300 });
   const meter = new Meter();
-  try {
-    const content =
-      choice.provider === "anthropic"
-        ? await generateReportClaude(env, config, choice.model, date, item, meter)
-        : await generateReportGeneric(createClient(env, choice), config, date, item, meter);
-    const report = { ...content, stats: meter.stats(choice.model) };
-    await env.NEWS.put(key, JSON.stringify(report), { expirationTtl: KEEP_SECONDS });
-    await addUsage(env, date, meter.cost, "report");
-    // 生成深度报道说明很感兴趣，记进阅读情况
-    await recordFeedback(env, date, id, { event: "report" }).catch(() => {});
-    return json({ report });
-  } catch (err) {
-    // 没生成出来也已经花了钱，记上
-    if (err instanceof AIError && err.billed) meter.add(err.billed);
-    if (meter.cost > 0) await addUsage(env, date, meter.cost, "failure");
-    throw err;
-  } finally {
-    await env.NEWS.delete(lockKey);
-  }
+  const work = (async () => {
+    try {
+      const content =
+        choice.provider === "anthropic"
+          ? await generateReportClaude(env, config, choice.model, date, item, meter)
+          : await generateReportGeneric(createClient(env, choice), config, date, item, meter);
+      const report = { ...content, stats: meter.stats(choice.model) };
+      await env.NEWS.put(key, JSON.stringify(report), { expirationTtl: KEEP_SECONDS });
+      await addUsage(env, date, meter.cost, "report");
+      // 生成深度报道说明很感兴趣，记进阅读情况
+      await recordFeedback(env, date, id, { event: "report" }).catch(() => {});
+      return report;
+    } catch (err) {
+      // 没生成出来也已经花了钱，记上
+      if (err instanceof AIError && err.billed) meter.add(err.billed);
+      if (meter.cost > 0) await addUsage(env, date, meter.cost, "failure");
+      throw err;
+    } finally {
+      await env.NEWS.delete(lockKey);
+    }
+  })();
+  // 用户点开原文、切出 App 或锁屏时连接会断。交给 waitUntil，断开后还能再跑一会儿（最多 30 秒）把报道存好，App 回来再取
+  ctx.waitUntil(work.catch(() => {}));
+  return json({ report: await work });
 }
 
 function reportUserPrompt(date: string, item: Brief["items"][number]): string {

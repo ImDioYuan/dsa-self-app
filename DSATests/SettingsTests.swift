@@ -107,6 +107,46 @@ struct SettingsTests {
         #expect(!json.contains(#""tasks""#))
     }
 
+    /// 两台设备都改了设置：各自改的字段都留下
+    @Test func mergeKeepsChangesFromBothDevices() throws {
+        var base = UserConfig()
+        base.name = "Alex"
+        base.news.topics = ["ai", "conflict"]
+        base.ai.tasks = .init(provider: "anthropic", model: "claude-haiku-4-5")
+        base.updatedAt = "v1"
+
+        // iPad 在 v1 上加了兴趣、改了简报时间，已经存成 v2
+        var remote = base
+        remote.news.topics = ["ai", "conflict", "gaming"]
+        remote.news.briefTime = "07:30"
+        remote.updatedAt = "v2"
+
+        // iPhone 还拿着 v1：改了称呼，把任务的模型改回「自动」
+        var local = base
+        local.name = "Alex W"
+        local.ai.tasks = nil
+
+        let merged = try UserConfig.merge(local: local, base: base, remote: remote)
+        #expect(merged.name == "Alex W")
+        #expect(merged.ai.tasks == nil)
+        #expect(merged.news.topics == ["ai", "conflict", "gaming"])
+        #expect(merged.news.briefTime == "07:30")
+        #expect(merged.updatedAt == "v2")
+    }
+
+    /// 服务商和模型是一组：iPad 换了服务商、iPhone 只改了模型时，不能拼出「OpenAI + Claude 的模型」
+    @Test func mergeKeepsModelChoiceTogether() throws {
+        var base = UserConfig()
+        base.ai.report = .init(provider: "anthropic", model: "claude-sonnet-5-5")
+        var remote = base
+        remote.ai.report = .init(provider: "openai", model: "")
+        var local = base
+        local.ai.report = .init(provider: "anthropic", model: "claude-opus-5-5")
+
+        let merged = try UserConfig.merge(local: local, base: base, remote: remote)
+        #expect(merged.ai.report == .init(provider: "anthropic", model: "claude-opus-5-5"))
+    }
+
     @Test func slugsForIDs() {
         #expect(ConfigFormat.slug("New York") == "new_york")
         #expect(ConfigFormat.slug("São Paulo") == "sao_paulo")

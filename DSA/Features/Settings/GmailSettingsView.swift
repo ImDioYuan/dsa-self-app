@@ -10,6 +10,7 @@ struct GmailSettingsView: View {
     @Environment(\.webAuthenticationSession) private var webAuthSession
     @AppStorage(SettingsKey.googleClientID) private var googleClientID = ""
     @AppStorage(SettingsKey.gmailForwardedLabel) private var forwardedLabel = ""
+    @AppStorage(SettingsKey.gmailExpiredAt) private var expiredAt = 0.0
     @State private var signedIn = GoogleAuth.isSignedIn
     @State private var email = GoogleAuth.tokens?.email
     @State private var error: String?
@@ -41,6 +42,10 @@ struct GmailSettingsView: View {
                         }
                     }
                     .disabled(googleClientID.isEmpty || signingIn)
+                    // 登录过期后今日页会一直提醒；这台设备不想再用 Gmail 时从这里关掉
+                    if expiredAt > 0 {
+                        Button("不再使用 Gmail") { GoogleAuth.signOut() }
+                    }
                 }
                 if let error {
                     Text(error).font(.footnote).foregroundStyle(.red)

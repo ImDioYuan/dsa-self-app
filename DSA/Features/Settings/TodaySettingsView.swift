@@ -17,6 +17,7 @@ struct TodaySettingsView: View {
     @State private var store = ConfigStore.shared
     @State private var calendarStatus = EKEventStore.authorizationStatus(for: .event)
     @State private var remindersStatus = EKEventStore.authorizationStatus(for: .reminder)
+    @State private var deletedCount = DeletedTasks.count
     @Environment(\.openURL) private var openURL
 
     var body: some View {
@@ -135,6 +136,15 @@ struct TodaySettingsView: View {
                 }
             }
             .disabled(sync.isSyncing)
+            // 在今日里删掉的日历、提醒事项、订阅日历和邮件任务不会再同步回来；删错了从这里找回
+            if deletedCount > 0 {
+                Button("恢复在今日里删掉的 \(deletedCount) 项") {
+                    DeletedTasks.restoreAll()
+                    deletedCount = 0
+                    Task { await sync.sync(context: context) }
+                }
+                .disabled(sync.isSyncing)
+            }
         } footer: {
             if lastSyncAt > 0 {
                 Text("上次同步：\(Date(timeIntervalSince1970: lastSyncAt).formatted(.relative(presentation: .named).locale(Locale(identifier: "zh_CN"))))")

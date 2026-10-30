@@ -1,3 +1,4 @@
+import SwiftData
 import SwiftUI
 
 /// 设置（底部的「设置」标签）：首页只是一列入口，右边是简短的状态，点进去再改。
@@ -68,6 +69,7 @@ struct SettingsView: View {
             .formStyle(.grouped)
             .navigationTitle("设置")
             .navigationDestination(isPresented: $router.showSetupGuide) { SetupGuideView() }
+            .navigationDestination(isPresented: $router.showGmailSettings) { GmailSettingsView(sync: sync) }
             // 从 Worker、Gmail 页回来时更新右边的状态
             .onAppear(perform: refresh)
             .task(id: workerReady) {

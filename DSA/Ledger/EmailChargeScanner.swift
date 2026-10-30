@@ -122,6 +122,8 @@ final class EmailChargeScanner {
         var categoryID: String
         var note: String
         var externalID: String
+        /// 折合多少澳元，币种不同时按它比（拿不到汇率时为 nil）
+        var baseAmount: Double?
     }
 
     /// 已有记录里用来比对的部分
@@ -131,6 +133,8 @@ final class EmailChargeScanner {
         var currency: Currency
         var merchant: String
         var date: Date
+        /// 按记账时的汇率折合多少澳元
+        var baseAmount: Double?
     }
 
     nonisolated static func candidate(from c: DSAClient.ChargeResult, receivedAt: Date?, incomeSlugs: Set<String>) -> Candidate? {
@@ -151,13 +155,25 @@ final class EmailChargeScanner {
         )
     }
 
-    /// 同方向、同币种、同金额、前后 2 天内、商家名对得上，就认为是同一笔（比如 Apple Pay 已经记过）
+    /// 同方向、商家名对得上，金额也对得上，就认为是同一笔（比如 Apple Pay 已经记过）。
+    /// 同币种：金额一样、前后 2 天内。币种不同（邮件收据是 USD，银行账单里扣的是澳元）：
+    /// 折成澳元差 5% 以内（汇率差价、海外手续费）、前后 3 天内（海外消费入账慢）
     nonisolated static func isDuplicate(_ c: Candidate, of existing: [ExistingEntry]) -> Bool {
+        duplicateIndex(c, of: existing) != nil
+    }
+
+    /// 和已有记录里的哪一条是同一笔（没有就是 nil）
+    nonisolated static func duplicateIndex(_ c: Candidate, of existing: [ExistingEntry]) -> Int? {
         let name = MerchantMemory.normalize(c.merchant)
-        return existing.contains { e in
-            guard e.kind == c.kind, e.currency == c.currency,
-                  abs(NSDecimalNumber(decimal: e.amount - c.amount).doubleValue) < 0.005,
-                  abs(e.date.timeIntervalSince(c.date)) <= 2 * 86_400 else { return false }
+        return existing.firstIndex { e in
+            guard e.kind == c.kind else { return false }
+            let gap = abs(e.date.timeIntervalSince(c.date))
+            if e.currency == c.currency {
+                guard abs(NSDecimalNumber(decimal: e.amount - c.amount).doubleValue) < 0.005, gap <= 2 * 86_400 else { return false }
+            } else {
+                guard let a = e.baseAmount, let b = c.baseAmount, a > 0, b > 0,
+                      abs(a - b) <= 0.05 * max(a, b), gap <= 3 * 86_400 else { return false }
+            }
             let other = MerchantMemory.normalize(e.merchant)
             guard !name.isEmpty, !other.isEmpty else { return false }
             return name == other || name.hasPrefix(other) || other.hasPrefix(name)
@@ -171,12 +187,29 @@ final class EmailChargeScanner {
         let from = earliest.addingTimeInterval(-3 * 86_400)
         let to = latest.addingTimeInterval(3 * 86_400)
         let descriptor = FetchDescriptor<LedgerEntry>(predicate: #Predicate { $0.date >= from && $0.date <= to })
-        var existing = ((try? LedgerStore.context.fetch(descriptor)) ?? []).map {
-            ExistingEntry(kind: $0.kind, amount: $0.amount, currency: $0.currencyValue, merchant: $0.merchant, date: $0.date)
+        var stored = ((try? LedgerStore.context.fetch(descriptor)) ?? []).map {
+            ExistingEntry(kind: $0.kind, amount: $0.amount, currency: $0.currencyValue, merchant: $0.merchant, date: $0.date,
+                          baseAmount: $0.baseAmount)
         }
+        var added: [ExistingEntry] = []
 
-        for c in candidates {
-            if LedgerStore.exists(externalID: c.externalID) || Self.isDuplicate(c, of: existing) {
+        for var c in candidates {
+            if c.currency != .base {
+                c.baseAmount = NSDecimalNumber(decimal: c.amount).doubleValue * (await ExchangeRates.shared.rateToBase(c.currency, on: c.date))
+            } else {
+                c.baseAmount = NSDecimalNumber(decimal: c.amount).doubleValue
+            }
+            if LedgerStore.exists(externalID: c.externalID) {
+                summary.duplicates += 1
+                continue
+            }
+            // 之前记过的每一笔只抵掉一张收据：两张一样的收据是两笔。这次刚记的可以抵掉好几封（同一笔的订单确认和收据）
+            if let match = Self.duplicateIndex(c, of: stored) {
+                stored.remove(at: match)
+                summary.duplicates += 1
+                continue
+            }
+            if Self.isDuplicate(c, of: added) {
                 summary.duplicates += 1
                 continue
             }
@@ -186,7 +219,8 @@ final class EmailChargeScanner {
             )
             if entry != nil {
                 summary.added.append(c.merchant)
-                existing.append(ExistingEntry(kind: c.kind, amount: c.amount, currency: c.currency, merchant: c.merchant, date: c.date))
+                added.append(ExistingEntry(kind: c.kind, amount: c.amount, currency: c.currency, merchant: c.merchant, date: c.date,
+                                           baseAmount: c.baseAmount))
             }
         }
         return summary

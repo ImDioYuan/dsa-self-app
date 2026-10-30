@@ -26,7 +26,10 @@ struct TaskFingerprint: Sendable {
         self.isDone = isDone
         key = TaskItem.dedupeKey(title: title, due: due)
         let title = title.lowercased()
-        courses = Set((title + "\n" + detail.lowercased()).matches(of: Self.coursePattern).map { $0.uppercased() })
+        // 课程代码先看标题，标题里没有再看详情（Moodle 的课程写在详情里）。
+        // 邮件任务的详情是 AI 写的理由，可能顺带提到别的课，标题里有就不看它
+        let titleCourses = Set(title.matches(of: Self.coursePattern).map { $0.uppercased() })
+        courses = titleCourses.isEmpty ? Set(detail.lowercased().matches(of: Self.coursePattern).map { $0.uppercased() }) : titleCourses
         types = Self.types(in: title)
         numbers = Self.numbers(in: title)
         words = Self.words(in: title)
@@ -36,9 +39,12 @@ struct TaskFingerprint: Sendable {
     static let dueTolerance: TimeInterval = 24 * 3600
 
     func isSameTask(as other: TaskFingerprint) -> Bool {
-        // 标题和时间都一样（同一个日程订阅在了两个日历里）。
+        // 有一条线索对不上就不是同一件事：不同课程、作业 vs 测验、Assignment 1 vs 2
+        func conflict<T>(_ a: Set<T>, _ b: Set<T>) -> Bool { !a.isEmpty && !b.isEmpty && a.isDisjoint(with: b) }
+
+        // 标题和时间都一样（同一个日程订阅在了两个日历里）。两门课同一时间的「Quiz 1 closes」不算。
         // 没有时间的只看标题，一条完成一条没完成的多半是先后两件事（又一封「回复 Alex」）
-        if key == other.key { return due != nil || isDone == other.isDone }
+        if key == other.key { return !conflict(courses, other.courses) && (due != nil || isDone == other.isDone) }
 
         guard let due, let otherDue = other.due else { return false }
         let gap = abs(due.timeIntervalSince(otherDue))
@@ -48,8 +54,6 @@ struct TaskFingerprint: Sendable {
               !(source == other.source && source.isSnapshot)
         else { return false }
 
-        // 有一条线索对不上就不是同一件事：不同课程、作业 vs 测验、Assignment 1 vs 2
-        func conflict<T>(_ a: Set<T>, _ b: Set<T>) -> Bool { !a.isEmpty && !b.isEmpty && a.isDisjoint(with: b) }
         if conflict(courses, other.courses) || conflict(types, other.types) || conflict(numbers, other.numbers) {
             return false
         }
@@ -153,12 +157,22 @@ enum TaskDuplicates {
     /// 有一条完成就算整组完成（优先显示完成的那条），其次按数据源 displayPriority
     static func groups(_ prints: [TaskFingerprint]) -> [[Int]] {
         var parent = Array(prints.indices)
+        // 每组里各条的课程代码。两门课的组不合并：没写课程的一条（苹果日历里的副本、邮件）不能把它们连起来，
+        // 一条同时提到两门课的也不行——两组里每两条带课程的都要有一门课对得上
+        var memberCourses = prints.map { $0.courses.isEmpty ? [] : [$0.courses] }
+        func courses(_ r: Int) -> Set<String> { memberCourses[r].reduce(into: []) { $0.formUnion($1) } }
         func root(_ i: Int) -> Int {
             var i = i
             while parent[i] != i { i = parent[i] }
             return i
         }
-        func join(_ a: Int, _ b: Int) { parent[root(b)] = root(a) }
+        func join(_ a: Int, _ b: Int) {
+            let (ra, rb) = (root(a), root(b))
+            guard ra != rb, memberCourses[ra].allSatisfy({ x in memberCourses[rb].allSatisfy { !x.isDisjoint(with: $0) } })
+            else { return }
+            parent[rb] = ra
+            memberCourses[ra] += memberCourses[rb]
+        }
 
         // 没有时间的只能看标题
         var byKey: [String: Int] = [:]
@@ -169,12 +183,29 @@ enum TaskDuplicates {
 
         // 有时间的按时间排好，只和 24 小时以内的比，不用两两全比
         let timed = prints.indices.compactMap { i in prints[i].due.map { (i, $0) } }.sorted { $0.1 < $1.1 }
+        var pairs: [(Int, Int)] = []
         for (n, (i, due)) in timed.enumerated() {
             for (j, later) in timed[(n + 1)...] {
                 guard later.timeIntervalSince(due) <= TaskFingerprint.dueTolerance else { break }
-                if prints[i].isSameTask(as: prints[j]) { join(i, j) }
+                if prints[i].isSameTask(as: prints[j]) { pairs.append((i, j)) }
             }
         }
+
+        // 先合标题和时间都一样的，日历里没写课程的副本就先归到它原本那门课
+        for (i, j) in pairs where prints[i].key == prints[j].key { join(i, j) }
+
+        // 再合靠线索对上的。没写课程的一组同时像两门课的作业时，说不清是哪门课的，单独显示
+        let fuzzy = pairs.filter { prints[$0.0].key != prints[$0.1].key }
+        var partnerCourses: [Int: [Set<String>]] = [:]
+        for (i, j) in fuzzy {
+            partnerCourses[root(i), default: []].append(courses(root(j)))
+            partnerCourses[root(j), default: []].append(courses(root(i)))
+        }
+        let ambiguous = Set(partnerCourses.compactMap { r, partners -> Int? in
+            let named = partners.filter { !$0.isEmpty }
+            return memberCourses[r].isEmpty && named.contains { a in named.contains { a.isDisjoint(with: $0) } } ? r : nil
+        })
+        for (i, j) in fuzzy where !ambiguous.contains(root(i)) && !ambiguous.contains(root(j)) { join(i, j) }
 
         var order: [Int] = []
         var members: [Int: [Int]] = [:]

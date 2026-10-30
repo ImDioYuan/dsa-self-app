@@ -132,7 +132,7 @@ enum ICalParser {
             // 全天事件：当作当天 23:59 截止
             formatter.dateFormat = "yyyyMMdd"
             formatter.timeZone = .current
-            return formatter.date(from: value).map { $0.addingTimeInterval(24 * 3600 - 60) }
+            return formatter.date(from: value).map { $0.lastMinuteOfDay() }
         }
         if value.hasSuffix("Z") {
             formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"

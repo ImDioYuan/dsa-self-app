@@ -228,17 +228,25 @@ final class ConfigStore {
     var error: String?
 
     var hasChanges: Bool { saved != nil && draft != saved }
+    private var loadedAt = Date.distantPast
 
+    /// 还没读过就读；读过超过 5 分钟、又没有没保存的修改时也重新读，别的设备改过的设置这里也能看到
     func loadIfNeeded() async {
-        if saved == nil { await load() }
+        if saved == nil || (!hasChanges && Date.now.timeIntervalSince(loadedAt) > 5 * 60) { await load() }
     }
 
     func load() async {
         isLoading = true
         defer { isLoading = false }
+        let before = draft
         do {
             let response = try await DSAClient.fromSettings().config()
+            let edited = draft
             apply(response)
+            // 读的这一会儿用户又改了：保留这些改动，别被刚读到的覆盖掉
+            if edited != before, let merged = try? UserConfig.merge(local: edited, base: before, remote: response.config) {
+                draft = merged
+            }
             error = nil
             // Worker 默认按 UTC 算简报时间；时区和这台设备不一样时保存一次（保存时会带上设备时区）
             if response.config.timezone != TimeZone.current.identifier { await save() }
@@ -255,8 +263,24 @@ final class ConfigStore {
         var config = draft
         // 新闻按这台设备的时区生成
         config.timezone = TimeZone.current.identifier
+        // 这台读到的版本。要在发请求之前记下：等回复的时候 load() 可能已经换掉了 saved
+        let base = saved
         do {
-            apply(try await DSAClient.fromSettings().saveConfig(config))
+            let client = try DSAClient.fromSettings()
+            do {
+                apply(try await client.saveConfig(config, base: base?.updatedAt))
+            } catch DSAClient.ClientError.http(409, _) {
+                // 这台读到配置以后别的设备又存过：拿最新的，合并上这台改的再存，不然会把那边的改动冲掉
+                let latest = try await client.config().config
+                // KV 刚写完的一小会儿可能还读到旧的；比这台读到的还旧就不能拿来合并
+                guard let base, latest.updatedAt >= base.updatedAt else {
+                    error = "设置刚在别的设备上改过，保存失败，请稍后再试"
+                    return
+                }
+                var merged = try UserConfig.merge(local: config, base: base, remote: latest)
+                merged.timezone = TimeZone.current.identifier
+                apply(try await client.saveConfig(merged, base: latest.updatedAt))
+            }
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -273,5 +297,34 @@ final class ConfigStore {
         providers = response.providers
         topics = response.topics
         groups = response.groups ?? []
+        loadedAt = .now
+    }
+}
+
+extension UserConfig {
+    /// 三方合并：这台改过的字段（和它读到的 base 不一样）用这台的，没改过的用 Worker 上最新的 remote。
+    /// 按 JSON 合并，以后加字段不用改这里。news、ai 里逐项合并；列表、文字整项替换，
+    /// ai 里的每一组（服务商 + 模型）也整组替换，不然会拼出「OpenAI + Claude 的模型」
+    static func merge(local: UserConfig, base: UserConfig, remote: UserConfig) throws -> UserConfig {
+        func object(_ config: UserConfig) throws -> Any { try JSONSerialization.jsonObject(with: JSONEncoder().encode(config)) }
+        func mergeValue(_ local: Any?, _ base: Any?, _ remote: Any?, path: [String]) -> Any? {
+            // 只往下合并两层：顶层和 news、ai。再往下（ai.tasks 这种）整个当一个值
+            if path.count < 2, let local = local as? [String: Any], let remote = remote as? [String: Any] {
+                let base = base as? [String: Any] ?? [:]
+                var result = remote
+                // 没值的可选字段编码时会省掉，所以也要看 base 里有、这台删掉了的
+                for key in Set(local.keys).union(base.keys) {
+                    result[key] = mergeValue(local[key], base[key], remote[key], path: path + [key])
+                }
+                return result
+            }
+            let unchanged = (local as? NSObject)?.isEqual(base) ?? (base == nil)
+            return unchanged ? remote : local
+        }
+        let merged = mergeValue(try object(local), try object(base), try object(remote), path: []) ?? [:]
+        var config = try JSONDecoder().decode(UserConfig.self, from: JSONSerialization.data(withJSONObject: merged))
+        // 下次保存时 Worker 按这个判断有没有又被别的设备改过
+        config.updatedAt = remote.updatedAt
+        return config
     }
 }

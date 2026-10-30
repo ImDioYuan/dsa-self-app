@@ -208,6 +208,26 @@ struct EmailChargeTests {
         #expect(!EmailChargeScanner.isDuplicate(candidate("Netflix", "18.99", day: 3, currency: .USD), of: e)) // 币种不同
     }
 
+    @Test func detectsDuplicateAcrossCurrencies() {
+        // 邮件收据记的是 USD 15.99（当时折合 A$24.50），过两天银行账单里扣的是 A$25.20（含汇率差价和海外手续费）
+        var receipt = existing("Netflix", "15.99", day: 3, currency: .USD)
+        receipt.baseAmount = 24.50
+        var bank = candidate("NETFLIX.COM SYDNEY", "25.20", day: 5)
+        bank.baseAmount = 25.20
+        #expect(EmailChargeScanner.isDuplicate(bank, of: [receipt]))
+
+        // 折成澳元差太多、隔太久、或者拿不到汇率的都不算
+        var other = bank
+        other.amount = 32
+        other.baseAmount = 32
+        #expect(!EmailChargeScanner.isDuplicate(other, of: [receipt]))
+        other = candidate("NETFLIX.COM SYDNEY", "25.20", day: 8)
+        other.baseAmount = 25.20
+        #expect(!EmailChargeScanner.isDuplicate(other, of: [receipt]))
+        other.baseAmount = nil
+        #expect(!EmailChargeScanner.isDuplicate(other, of: [receipt]))
+    }
+
     @Test func convertsChargeResult() throws {
         let raw = DSAClient.ChargeResult(
             sourceId: "gmail:abc", externalId: "gmail:abc#0", kind: "expense", merchant: "Netflix",
@@ -418,6 +438,62 @@ struct TaskDedupeTests {
         #expect(left == ["manual:1", "reminders:1"])
     }
 
+    @Test func deletedTasksStayDeleted() throws {
+        let deleted = DeletedTasks(source: .calendar)
+        let reminders = DeletedTasks(source: .reminders)
+        let saved = [deleted.key, reminders.key].map { ($0, UserDefaults.standard.object(forKey: $0)) }
+        defer { for (key, value) in saved { UserDefaults.standard.set(value, forKey: key) } }
+        deleted.removeAll()
+        reminders.removeAll()
+
+        let container = try ModelContainer(for: TaskItem.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = container.mainContext
+        let lecture = TaskDraft(sourceID: "calendar:1", title: "Lecture", source: .calendar, kind: .meeting, importance: .normal)
+        let tutorial = TaskDraft(sourceID: "calendar:2", title: "Tutorial", source: .calendar, kind: .meeting, importance: .normal)
+        TaskSyncService.merge([lecture, tutorial], from: .calendar, into: context)
+        let item = try #require(try context.fetch(FetchDescriptor<TaskItem>()).first { $0.sourceID == "calendar:1" })
+        TaskSyncService.delete([item], in: context)
+
+        // 日历里还有这一项：同步后也不再出现
+        TaskSyncService.merge([lecture, tutorial], from: .calendar, into: context)
+        #expect(try context.fetch(FetchDescriptor<TaskItem>()).map(\.sourceID) == ["calendar:2"])
+        #expect(deleted.entries.count == 1)
+
+        // 日历不再返回它（过期了或者删了）：忘掉
+        TaskSyncService.merge([tutorial], from: .calendar, into: context)
+        #expect(deleted.entries.isEmpty)
+
+        // 重复的提醒事项每次都是同一个 sourceID：删掉今天这次，下一次照常出现
+        let today = Date(timeIntervalSince1970: 1_791_525_600)
+        var pills = TaskDraft(sourceID: "reminders:9", title: "吃药", source: .reminders, kind: .deadline, importance: .important, due: today)
+        TaskSyncService.merge([pills], from: .reminders, into: context)
+        let first = try #require(try context.fetch(FetchDescriptor<TaskItem>()).first { $0.sourceID == "reminders:9" })
+        TaskSyncService.delete([first], in: context)
+        TaskSyncService.merge([pills], from: .reminders, into: context)
+        #expect(try context.fetch(FetchDescriptor<TaskItem>()).allSatisfy { $0.sourceID != "reminders:9" })
+        pills.due = today.addingTimeInterval(24 * 3600)
+        TaskSyncService.merge([pills], from: .reminders, into: context)
+        #expect(try context.fetch(FetchDescriptor<TaskItem>()).contains { $0.sourceID == "reminders:9" })
+
+        // 关掉再打开数据源就重新开始
+        TaskSyncService.delete(try context.fetch(FetchDescriptor<TaskItem>()).filter { $0.sourceID == "reminders:9" }, in: context)
+        #expect(!reminders.entries.isEmpty)
+        TaskSyncService.removeTasks(from: [.reminders], in: context)
+        #expect(reminders.entries.isEmpty)
+    }
+
+    @Test func dateOnlyDueIsLastMinuteEvenOnDSTDays() throws {
+        var sydney = Calendar(identifier: .gregorian)
+        sydney.timeZone = try #require(TimeZone(identifier: "Australia/Sydney"))
+        // 2026-10-04 夏令时开始（这天只有 23 小时），2027-04-04 结束（25 小时）
+        for (year, month, day) in [(2026, 10, 4), (2027, 4, 4), (2026, 10, 30)] {
+            let noon = try #require(sydney.date(from: DateComponents(year: year, month: month, day: day, hour: 12)))
+            let due = noon.lastMinuteOfDay(in: sydney)
+            #expect(sydney.dateComponents([.year, .month, .day, .hour, .minute], from: due)
+                == DateComponents(year: year, month: month, day: day, hour: 23, minute: 59))
+        }
+    }
+
     // MARK: Moodle 和邮件里的同一个作业
 
     /// 周五 17:00（Moodle 上的准确时间）
@@ -475,5 +551,40 @@ struct TaskDedupeTests {
         var oldReply = reply
         oldReply.isDone = true
         #expect(TaskDuplicates.groups([reply, oldReply, reply]) == [[0, 2], [1]])
+    }
+
+    // MARK: 两门课的同名作业
+
+    @Test func sameTitleInTwoCoursesIsNotMerged() {
+        // 同一个 Moodle 订阅里两门课都有「Quiz 1 closes」，截止时间也一样
+        let math = task("Quiz 1 closes", "MATH2831-5259_00456", from: .ical)
+        let comp = task("Quiz 1 closes", "COMP3311-5259_00123", from: .ical)
+        #expect(!math.isSameTask(as: comp))
+        #expect(TaskDuplicates.groups([math, comp]) == [[0], [1]])
+        // 订阅在两个日历里的同一条照样合并
+        #expect(TaskDuplicates.groups([math, task("Quiz 1 closes", from: .calendar)]) == [[0, 1]])
+    }
+
+    @Test func copyWithoutCourseDoesNotBridgeTwoCourses() {
+        let comp = task("Assignment 2 is due", "COMP3311-5259_00123", from: .ical)
+        let math = task("Assignment 2 is due", "MATH2831-5259_00456", from: .ical, hours: 5)
+        // 苹果日历里订阅的同一条，没有课程
+        let mathCopy = task("Assignment 2 is due", from: .calendar, hours: 5)
+        #expect(TaskDuplicates.groups([comp, math, mathCopy]) == [[0], [1, 2]])
+
+        // 没写课程的邮件同时像两门课的作业：说不清是哪门课的，单独显示
+        let email = task("提交作业二", from: .gmail, hours: 6.98)
+        #expect(TaskDuplicates.groups([comp, math, mathCopy, email]) == [[0], [1, 2], [3]])
+        // 只像一门课的照样合并
+        #expect(TaskDuplicates.groups([comp, email]) == [[0, 1]])
+
+        // 一封邮件提醒两门课的作业 2，AI 写的理由里两门课都有：按标题里的课程分开
+        let reason = "邮件提醒 COMP3311 和 MATH2831 的作业 2 都在周五截止"
+        let compEmail = task("提交 COMP3311 Assignment 2", reason, from: .gmail, hours: 6.98)
+        let mathEmail = task("提交 MATH2831 Assignment 2", reason, from: .gmail, hours: 6.98)
+        #expect(TaskDuplicates.groups([comp, math, compEmail, mathEmail]) == [[0, 2], [1, 3]])
+        // 标题里同时写了两门课的一条也不能把两门课连起来
+        let joint = task("COMP3311 / MATH2831 Assignment 2", from: .gmail, hours: 6.98)
+        #expect(TaskDuplicates.groups([comp, math, joint]).count == 2)
     }
 }

@@ -19,6 +19,7 @@ struct TasksView: View {
     /// 四象限卡片在屏幕上的位置：放大时从这里出来，收起时回到这里
     @State private var matrixCardFrame: CGRect = .zero
     @AppStorage(SettingsKey.urgentHorizonHours) private var horizonHours = UrgencyScale.defaultHorizonHours
+    @AppStorage(SettingsKey.gmailExpiredAt) private var gmailExpiredAt = 0.0
 
     /// 同一象限里先按截止时间排（没有截止时间的放最后），同一时间重要的在前
     private func section(_ open: [TaskGroup], _ quadrant: Quadrant, scale: UrgencyScale, now: Date) -> [TaskGroup] {
@@ -59,6 +60,10 @@ struct TasksView: View {
 
                         if setup.needsAttention {
                             SetupReminderCard(missing: setup.missingRequired) { AppRouter.shared.openSetupGuide() }
+                        }
+
+                        if gmailExpiredAt > 0 {
+                            GmailExpiredCard { AppRouter.shared.openGmailSettings() }
                         }
 
                         if !sync.errors.isEmpty {
@@ -274,7 +279,7 @@ struct TasksView: View {
 
     private func delete(_ group: TaskGroup) {
         withAnimation {
-            for item in group.items { context.delete(item) }
+            TaskSyncService.delete(group.items, in: context)
         }
     }
 }
@@ -483,6 +488,25 @@ private struct SyncErrorCard: View {
             }
         }
         .glassCard(cornerRadius: 20, padding: 14)
+    }
+}
+
+/// Gmail 登录过期（测试模式下每 7 天一次）。不能关掉，重新登录后才消失
+private struct GmailExpiredCard: View {
+    var onOpen: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Gmail 需要重新登录", systemImage: "envelope.badge.shield.half.filled")
+                .font(.headline)
+            Text("测试模式下每 7 天要重新登录一次。登录前，邮件里的待办和邮件自动记账都会暂停。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Button("重新登录", action: onOpen)
+                .buttonStyle(.glassProminent)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard(cornerRadius: 24, padding: 18)
     }
 }
 

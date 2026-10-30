@@ -182,15 +182,19 @@ final class CSVImportSession: Identifiable {
         let entries = (try? LedgerStore.context.fetch(descriptor)) ?? []
         let imported = Set(entries.compactMap(\.externalID))
         let existing = entries.map {
-            EmailChargeScanner.ExistingEntry(kind: $0.kind, amount: $0.amount, currency: $0.currencyValue, merchant: $0.merchant, date: $0.date)
+            EmailChargeScanner.ExistingEntry(kind: $0.kind, amount: $0.amount, currency: $0.currencyValue, merchant: $0.merchant, date: $0.date,
+                                             baseAmount: $0.baseAmount)
         }
 
+        // 每条已有记录只能对上一行：同一天两笔一样的消费，Apple Pay 只记了一笔时另一行照常导入
+        var available = existing
         for i in rows.indices {
             let row = rows[i]
             let status: CSVTransaction.Status
             if imported.contains(row.externalID) {
                 status = .imported
-            } else if [row.merchant, row.rawDescription].contains(where: { isDuplicate(row, merchant: $0, existing: existing) }) {
+            } else if let match = [row.merchant, row.rawDescription].lazy.compactMap({ self.duplicateIndex(row, merchant: $0, existing: available) }).first {
+                available.remove(at: match)
                 status = .likelyDuplicate
             } else {
                 status = .new
@@ -202,12 +206,16 @@ final class CSVImportSession: Identifiable {
         }
     }
 
-    private func isDuplicate(_ row: CSVTransaction, merchant: String, existing: [EmailChargeScanner.ExistingEntry]) -> Bool {
+    private func duplicateIndex(_ row: CSVTransaction, merchant: String, existing: [EmailChargeScanner.ExistingEntry]) -> Int? {
+        let currency = currency(of: row)
+        // 和别的币种的记录比时按澳元比；这里只是去重，用最新汇率估算就够了（误差在 5% 的容差里）
+        let rate = currency == .base ? 1 : ExchangeRates.shared.latest.rateToBase(currency)
         let candidate = EmailChargeScanner.Candidate(
-            kind: row.kind, amount: row.amount, currency: currency(of: row), merchant: merchant,
-            date: row.date, categoryID: row.categoryID, note: row.note, externalID: row.externalID
+            kind: row.kind, amount: row.amount, currency: currency, merchant: merchant,
+            date: row.date, categoryID: row.categoryID, note: row.note, externalID: row.externalID,
+            baseAmount: rate.map { NSDecimalNumber(decimal: row.amount).doubleValue * $0 }
         )
-        return EmailChargeScanner.isDuplicate(candidate, of: existing)
+        return EmailChargeScanner.duplicateIndex(candidate, of: existing)
     }
 
     // MARK: - 写入

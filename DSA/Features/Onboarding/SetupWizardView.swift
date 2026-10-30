@@ -1,3 +1,4 @@
+import SwiftData
 import SwiftUI
 
 /// 一页一步完成必需的配置：部署 Worker → 连接 → AI 的 key → 个人资料。
